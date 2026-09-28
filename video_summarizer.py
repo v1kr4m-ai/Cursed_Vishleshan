@@ -1144,7 +1144,7 @@ def build_home_tab(parent_frame, online0, on_start):
     tk.Entry(extra, textvariable=to_var, width=8, font=(FONT, 9)).pack(side="left", padx=(2, 4))
     small(extra, "e.g. 10:00 to 25:00  (file / link; blank = all)").pack(side="left")
 
-    small(root, "Voice cleanup is configured in its own \"Voice Cleanup\" tab.").pack(
+    small(root, "Voice cleanup and offline models are configured under Settings (menu bar above).").pack(
         anchor="w", padx=16, pady=(6, 0))
 
     hint = small(root, "")
@@ -3717,6 +3717,37 @@ def build_offline_settings_tab(parent_frame, online_var):
             "LM Studio server not running - open LM Studio > Developer tab > Start server.")
 
 
+# ---------------------------------------------------------------- settings tab (on demand)
+def build_settings_tab(parent_frame, online_var):
+    """Combined Settings: Voice Cleanup + Offline Settings, stacked in one scrollable tab."""
+    import tkinter as tk
+
+    canvas = tk.Canvas(parent_frame, bg="#ffffff", highlightthickness=0)
+    vsb = tk.Scrollbar(parent_frame, orient="vertical", command=canvas.yview)
+    canvas.configure(yscrollcommand=vsb.set)
+    vsb.pack(side="right", fill="y")
+    canvas.pack(side="left", fill="both", expand=True)
+
+    inner = tk.Frame(canvas, bg="#ffffff")
+    win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+    inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+    canvas.bind("<Configure>", lambda e: canvas.itemconfigure(win_id, width=e.width))
+    canvas.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
+
+    build_voice_cleanup_tab(inner, online_var)
+    tk.Frame(inner, bg="#dadce0", height=2).pack(fill="x", pady=(20, 0))
+    build_offline_settings_tab(inner, online_var)
+
+
+def open_settings_tab():
+    existing = APP_STATE.get("settings_frame")
+    if existing is not None and existing.winfo_exists():
+        NOTEBOOK.select(existing)
+        return
+    frame = open_feature_tab("Settings", build_settings_tab, APP_STATE.get("online_var"))
+    APP_STATE["settings_frame"] = frame
+
+
 # ---------------------------------------------------------------- history tab (on demand)
 def open_history_tab():
     existing = APP_STATE.get("history_frame")
@@ -3849,6 +3880,8 @@ def main():
     tk.Checkbutton(toolbar, text="Online", variable=online_var, bg="#f1f3f4",
                    activebackground="#f1f3f4", font=("Segoe UI", 10, "bold")).pack(
         side="left", padx=8, pady=4)
+    mode_lbl = tk.Label(toolbar, bg="#f1f3f4", font=("Segoe UI", 9))
+    mode_lbl.pack(side="left", padx=(0, 10))
     net_lbl = tk.Label(toolbar, text=("Internet: connected" if online0 else "Internet: offline"),
                        bg="#f1f3f4", fg=("#1e8e3e" if online0 else "#c5221f"), font=("Segoe UI", 9))
     net_lbl.pack(side="left", padx=6)
@@ -3860,23 +3893,23 @@ def main():
         s = load_settings()
         s["mode_online"] = bool(online_var.get())
         save_settings(s)
+        mode_lbl.configure(
+            text=("prefers online tools (Claude / ElevenLabs / edge-tts)" if online_var.get()
+                  else "prefers offline tools (Ollama / LM Studio / local cleanup)"),
+            fg="#1e8e3e" if online_var.get() else "#5f6368")
     online_var.trace_add("write", _persist_online)
     _persist_online()
 
     NOTEBOOK = ttk.Notebook(ROOT)
     NOTEBOOK.pack(fill="both", expand=True)
 
+    menubar = tk.Menu(ROOT)
+    menubar.add_command(label="Settings", command=open_settings_tab)
+    ROOT.config(menu=menubar)
+
     home_frame = tk.Frame(NOTEBOOK, bg="#ffffff")
     NOTEBOOK.add(home_frame, text="Home")
     build_home_tab(home_frame, online0, lambda res: launch_feature(res, online_var))
-
-    vc_frame = tk.Frame(NOTEBOOK, bg="#ffffff")
-    NOTEBOOK.add(vc_frame, text="Voice Cleanup")
-    build_voice_cleanup_tab(vc_frame, online_var)
-
-    off_frame = tk.Frame(NOTEBOOK, bg="#ffffff")
-    NOTEBOOK.add(off_frame, text="Offline Settings")
-    build_offline_settings_tab(off_frame, online_var)
 
     ROOT.protocol("WM_DELETE_WINDOW", on_app_close)
     ROOT.mainloop()
