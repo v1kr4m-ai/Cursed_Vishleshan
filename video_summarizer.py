@@ -3595,6 +3595,64 @@ def build_voice_cleanup_tab(parent_frame, online_var):
     online_var.trace_add("write", default_by_online)
     on_noise()
 
+    # ---- standalone: clean up one file and save the result
+    sep = tk.Frame(root, bg="#dadce0", height=1)
+    sep.pack(fill="x", padx=16, pady=(18, 14))
+
+    tk.Label(root, text="Clean up a file", bg=WHITE, font=(FONT, 12, "bold")).pack(anchor="w", padx=16)
+    tk.Label(root, text="Pick an audio or video file - its audio is cleaned using the Mode above "
+                        "and saved as a .wav file in the folder you choose.",
+             bg=WHITE, fg=MUTED, font=(FONT, 9), wraplength=860, justify="left").pack(
+        anchor="w", padx=16, pady=(0, 8))
+
+    cu = {"src": None, "out_dir": None}
+
+    frow = tk.Frame(root, bg=WHITE)
+    frow.pack(fill="x", padx=12, pady=(2, 0))
+    tk.Label(frow, text="File:", bg=WHITE, font=(FONT, 10)).pack(side="left")
+    src_lbl = tk.Label(frow, text="(none selected)", bg=WHITE, fg=MUTED, font=(FONT, 9))
+    src_lbl.pack(side="left", padx=6, fill="x", expand=True)
+    tk.Button(frow, text="Browse...", font=(FONT, 9), relief="flat", bg="#e8f0fe", padx=10,
+              command=lambda: pick_src()).pack(side="right")
+
+    orow = tk.Frame(root, bg=WHITE)
+    orow.pack(fill="x", padx=12, pady=(6, 0))
+    tk.Label(orow, text="Save to:", bg=WHITE, font=(FONT, 10)).pack(side="left")
+    out_lbl = tk.Label(orow, text="(same folder as the file)", bg=WHITE, fg=MUTED, font=(FONT, 9))
+    out_lbl.pack(side="left", padx=6, fill="x", expand=True)
+    tk.Button(orow, text="Browse...", font=(FONT, 9), relief="flat", bg="#e8f0fe", padx=10,
+              command=lambda: pick_out()).pack(side="right")
+
+    run_btn = tk.Button(root, text="Clean up  ▶", font=(FONT, 10, "bold"), bg="#1a73e8",
+                        fg="white", relief="flat", padx=14, pady=6, state="disabled")
+    run_btn.pack(anchor="w", padx=12, pady=(10, 14))
+
+    def pick_src():
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(parent=ROOT, title="Select an audio or video file to clean up",
+                                          filetypes=VIDEO_TYPES)
+        if path:
+            cu["src"] = Path(path)
+            src_lbl.configure(text=cu["src"].name, fg="#202124")
+            run_btn.configure(state="normal")
+
+    def pick_out():
+        from tkinter import filedialog
+        path = filedialog.askdirectory(parent=ROOT, title="Select a folder to save the cleaned file in")
+        if path:
+            cu["out_dir"] = Path(path)
+            out_lbl.configure(text=str(cu["out_dir"]), fg="#202124")
+
+    def run_cleanup():
+        src = cu["src"]
+        if not src:
+            return
+        out_dir = cu["out_dir"] or src.parent
+        mode = dict(NOISE_CHOICES)[noise_var.get()]
+        open_log_tab(f"Cleanup: {src.name}", _run_cleanup_job, src, out_dir, mode, online_var.get())
+
+    run_btn.configure(command=run_cleanup)
+
 
 # ---------------------------------------------------------------- offline settings tab
 def build_offline_settings_tab(parent_frame, online_var):
@@ -3667,6 +3725,28 @@ def open_history_tab():
         return
     frame = open_feature_tab("History", open_history)
     APP_STATE["history_frame"] = frame
+
+
+def _run_cleanup_job(src_path: Path, out_dir: Path, noise_mode, online):
+    """Standalone voice cleanup: clean one file's audio and save it - no transcription."""
+    print(f"Cleaning up: {src_path}\n")
+    if noise_mode == "off":
+        print('[!] Mode is "Off" - nothing to clean. Pick a mode in Voice Cleanup above first.')
+        return
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tmpdir = Path(tempfile.mkdtemp(prefix="vidsum_clean_"))
+    try:
+        audio_src, _ = prepare_audio(src_path, None, noise_mode, tmpdir, online)
+        out_path = out_dir / f"{src_path.stem}_cleaned.wav"
+        n = 2
+        while out_path.exists():
+            out_path = out_dir / f"{src_path.stem}_cleaned_{n}.wav"
+            n += 1
+        shutil.copyfile(audio_src, out_path)
+        print(f"\nSaved: {out_path}")
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------- feature dispatch
