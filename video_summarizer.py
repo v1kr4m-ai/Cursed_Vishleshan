@@ -1640,11 +1640,16 @@ def ensure_ollama():
     return False
 
 
-def ollama_model():
-    if OLLAMA_MODEL:
-        return OLLAMA_MODEL
+def list_ollama_models():
     tags = http_json(OLLAMA_URL + "/api/tags", timeout=5)
-    names = [m["name"] for m in tags.get("models", []) if "embed" not in m["name"].lower()]
+    return [m["name"] for m in tags.get("models", []) if "embed" not in m["name"].lower()]
+
+
+def ollama_model():
+    picked = load_settings().get("ollama_model") or OLLAMA_MODEL
+    names = list_ollama_models()
+    if picked and picked in names:
+        return picked
     return names[0] if names else None
 
 
@@ -1683,11 +1688,16 @@ def ensure_lmstudio():
     return False
 
 
-def lmstudio_model():
-    if LMSTUDIO_MODEL:
-        return LMSTUDIO_MODEL
+def list_lmstudio_models():
     r = http_json(LMSTUDIO_URL + "/v1/models", timeout=5)
-    ids = [m["id"] for m in r.get("data", []) if "embed" not in m["id"].lower()]
+    return [m["id"] for m in r.get("data", []) if "embed" not in m["id"].lower()]
+
+
+def lmstudio_model():
+    picked = load_settings().get("lmstudio_model") or LMSTUDIO_MODEL
+    ids = list_lmstudio_models()
+    if picked and picked in ids:
+        return picked
     return ids[0] if ids else None
 
 
@@ -3587,6 +3597,69 @@ def build_voice_cleanup_tab(parent_frame, online_var):
     on_noise()
 
 
+# ---------------------------------------------------------------- offline settings tab
+def build_offline_settings_tab(parent_frame, online_var):
+    """Pick which installed Ollama / LM Studio model is used for summaries and
+    translations (both already route through the same picked model)."""
+    import tkinter as tk
+    from tkinter import ttk
+
+    WHITE, MUTED = "#ffffff", "#5f6368"
+    FONT = "Segoe UI"
+    root = parent_frame
+    root.configure(bg=WHITE)
+    saved = load_settings()
+    AUTO = "(auto - first available)"
+
+    tk.Label(root, text="Offline settings", bg=WHITE, font=(FONT, 12, "bold")).pack(
+        anchor="w", padx=16, pady=(12, 4))
+    tk.Label(root, text="Choose which installed model Ollama / LM Studio uses for summaries and "
+                        "translations. Leave on \"" + AUTO + "\" to use whichever model comes "
+                        "first in each app's own list.", bg=WHITE, fg=MUTED, font=(FONT, 9),
+             wraplength=860, justify="left").pack(anchor="w", padx=16)
+
+    def section(title, list_fn, setting_key, not_running_hint):
+        head = tk.Frame(root, bg=WHITE)
+        head.pack(fill="x", padx=12, pady=(14, 0))
+        tk.Label(head, text=title, bg=WHITE, font=(FONT, 10, "bold")).pack(side="left")
+        status_lbl = tk.Label(head, bg=WHITE, fg=MUTED, font=(FONT, 9))
+        status_lbl.pack(side="left", padx=8)
+
+        prow = tk.Frame(root, bg=WHITE)
+        prow.pack(fill="x", padx=12, pady=(2, 0))
+        var = tk.StringVar(value=saved.get(setting_key) or AUTO)
+        box = ttk.Combobox(prow, textvariable=var, state="readonly", width=36)
+        box.pack(side="left")
+        refresh_btn = tk.Button(prow, text="Refresh list", font=(FONT, 9), relief="flat",
+                                bg="#e8f0fe", padx=10)
+        refresh_btn.pack(side="left", padx=6)
+
+        def refresh(*_):
+            try:
+                names = list_fn()
+                status_lbl.configure(text=(f"{len(names)} model(s) found." if names
+                                           else not_running_hint), fg=(MUTED if names else "#c5221f"))
+            except Exception:
+                names = []
+                status_lbl.configure(text=not_running_hint, fg="#c5221f")
+            box.configure(values=[AUTO] + names)
+            if var.get() not in ([AUTO] + names):
+                var.set(AUTO)
+
+        def persist(*_):
+            s = load_settings()
+            s[setting_key] = "" if var.get() == AUTO else var.get()
+            save_settings(s)
+
+        box.bind("<<ComboboxSelected>>", persist)
+        refresh_btn.configure(command=refresh)
+        refresh()
+
+    section("Ollama", list_ollama_models, "ollama_model", "Ollama not running - start it first.")
+    section("LM Studio", list_lmstudio_models, "lmstudio_model",
+            "LM Studio server not running - open LM Studio > Developer tab > Start server.")
+
+
 # ---------------------------------------------------------------- history tab (on demand)
 def open_history_tab():
     existing = APP_STATE.get("history_frame")
@@ -3722,6 +3795,10 @@ def main():
     vc_frame = tk.Frame(NOTEBOOK, bg="#ffffff")
     NOTEBOOK.add(vc_frame, text="Voice Cleanup")
     build_voice_cleanup_tab(vc_frame, online_var)
+
+    off_frame = tk.Frame(NOTEBOOK, bg="#ffffff")
+    NOTEBOOK.add(off_frame, text="Offline Settings")
+    build_offline_settings_tab(off_frame, online_var)
 
     ROOT.protocol("WM_DELETE_WINDOW", on_app_close)
     ROOT.mainloop()
