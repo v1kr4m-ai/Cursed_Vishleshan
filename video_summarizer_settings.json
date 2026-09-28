@@ -1,0 +1,32 @@
+{
+  "model": "tiny",
+  "language": null,
+  "outputs": [
+    "Original",
+    "English"
+  ],
+  "mode": "file",
+  "skip_done": true,
+  "subfolders": false,
+  "noise": "off",
+  "speak_save": false,
+  "keep_clean": false,
+  "captions": {
+    "opacity": 0.85,
+    "position": "Bottom",
+    "width": 70,
+    "font": "Segoe UI",
+    "size": 22,
+    "lines": 2,
+    "fg": "#ffffff",
+    "bg": "#000000",
+    "show_original": true,
+    "no_bg": false,
+    "speak": false,
+    "x": null,
+    "y": null
+  },
+  "caption_lang": "English",
+  "alert_words": "",
+  "alert_beep": true
+}
