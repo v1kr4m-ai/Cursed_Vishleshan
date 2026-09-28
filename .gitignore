@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+*.bak
+video_summarizer_settings.json

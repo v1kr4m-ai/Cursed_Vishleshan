@@ -1,6 +1,6 @@
 """
-Video Summarizer
-----------------
+Cursed_Vishleshan
+-----------------
 Run it -> choose model + languages + what to process -> get:
   - <video>_transcript.txt           : full script in the original spoken language(s)
   - <video>_transcript_<Lang>.txt    : full script translated into each output language you chose
@@ -16,7 +16,7 @@ It also detects which languages are spoken (and where), uses an NVIDIA GPU autom
 present, and keeps a searchable History of everything processed.
 
 Live microphone / system audio: press Record, the text appears as it's spoken; then translate,
-copy or save (saved to Documents\\Video Summarizer, together with downloads and history).
+copy or save (saved to Documents\\Cursed_Vishleshan, together with downloads and history).
 
 Transcription: faster-whisper, runs locally (offline after the first model download).
 Summaries and translations use (tried in order, first one that works is used):
@@ -56,6 +56,7 @@ import inspect
 import tempfile
 import threading
 import subprocess
+import contextlib
 import urllib.request
 from collections import Counter
 from pathlib import Path
@@ -63,10 +64,7 @@ from pathlib import Path
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 # ======================= Settings =======================
-# --- Startup window ---
-SHOW_SETTINGS_WINDOW = True  # choose model / languages each run (remembers your last choice)
-
-# Defaults (used the first time, or when SHOW_SETTINGS_WINDOW = False)
+# Defaults (used the first time)
 WHISPER_MODEL = "small"
 SPOKEN_LANGUAGE = None                  # None = auto-detect, or e.g. "hi", "en"
 OUTPUT_LANGUAGES = ["Original", "English"]
@@ -109,7 +107,7 @@ LIVE_COMMIT_SEC = 8          # lock in finished sentences once this much speech 
 LIVE_MAX_PENDING_SEC = 20    # never keep more than this much un-locked audio
 LIVE_SILENCE_COMMIT_SEC = 0.9  # a pause this long locks in what was said
 LIVE_BEAM_SIZE = 1           # 1 = fastest live updates (final pass after Stop uses 5)
-SAVE_DIR = Path.home() / "Documents" / "Video Summarizer"   # mic/system recordings, downloads, history
+SAVE_DIR = Path.home() / "Documents" / "Cursed_Vishleshan"   # mic/system recordings, downloads, history
 
 # --- YouTube / links ---
 DOWNLOAD_MAX_HEIGHT = 720    # video quality to download (lower = faster; frames only need ~720p)
@@ -835,9 +833,141 @@ def save_settings(s: dict):
         pass
 
 
-# ---------------------------------------------------------------- settings window
-def choose_settings(online: bool):
-    """Pick model, languages and what to process.  Returns a dict, or None if cancelled."""
+# ---------------------------------------------------------------- persistent app shell
+ROOT = None       # the single tk.Tk() window, created once in main()
+NOTEBOOK = None   # ttk.Notebook living in ROOT - every feature opens a tab in here
+APP_STATE = {}    # small cross-tab bag: is_downloading(), history_frame, online_var
+# ponytail: one job at a time app-wide (matches the old fully-sequential app); move to
+# per-job contextvars-based stdout capture if concurrent file/folder/url/watch jobs are wanted.
+PROCESSING_LOCK = threading.Lock()
+
+
+def _close_tab(frame):
+    cb = getattr(frame, "on_close", None)
+    if cb:
+        try:
+            cb()
+            return
+        except Exception:
+            pass
+    try:
+        NOTEBOOK.forget(frame)
+    except Exception:
+        pass
+
+
+def open_feature_tab(title, builder_fn, *args, closable=True, **kwargs):
+    """Create a new Notebook tab and build a feature into it. Never touches other tabs."""
+    import tkinter as tk
+    frame = tk.Frame(NOTEBOOK, bg="#ffffff")
+    NOTEBOOK.add(frame, text=title)
+    if closable:
+        bar = tk.Frame(frame, bg="#f1f3f4")
+        bar.pack(fill="x", side="top")
+        tk.Button(bar, text="✕ Close tab", font=("Segoe UI", 8), relief="flat", bg="#f1f3f4",
+                  command=lambda: _close_tab(frame)).pack(side="right", padx=4, pady=2)
+    NOTEBOOK.select(frame)
+    builder_fn(frame, *args, **kwargs)
+    return frame
+
+
+class _QueueWriter:
+    """File-like object whose .write() pushes onto a queue, for redirecting print() output."""
+    def __init__(self, q):
+        self.q = q
+
+    def write(self, s):
+        if s:
+            self.q.put(s)
+
+    def flush(self):
+        pass
+
+
+def open_log_tab(title, target_fn, *args, stoppable=False, stop_event=None, **kwargs):
+    """Run target_fn(*args, **kwargs) in a background thread, streaming its print() output
+    into a scrolling log tab. Only one such job runs at a time app-wide (PROCESSING_LOCK)."""
+    import tkinter as tk
+    from tkinter import scrolledtext
+
+    frame = tk.Frame(NOTEBOOK, bg="#ffffff")
+    NOTEBOOK.add(frame, text=title)
+    NOTEBOOK.select(frame)
+
+    bar = tk.Frame(frame, bg="#f1f3f4")
+    bar.pack(fill="x", side="top")
+    status_lbl = tk.Label(bar, text="Queued...", bg="#f1f3f4", font=("Segoe UI", 9))
+    status_lbl.pack(side="left", padx=6)
+    if stoppable and stop_event is not None:
+        tk.Button(bar, text="Stop", font=("Segoe UI", 8), relief="flat", bg="#fce8e6",
+                  command=stop_event.set).pack(side="right", padx=4, pady=2)
+    tk.Button(bar, text="✕ Close tab", font=("Segoe UI", 8), relief="flat", bg="#f1f3f4",
+              command=lambda: NOTEBOOK.forget(frame)).pack(side="right", padx=4, pady=2)
+
+    log = scrolledtext.ScrolledText(frame, wrap="word", font=("Consolas", 10),
+                                    relief="solid", bd=1, bg="#ffffff")
+    log.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+    log.configure(state="disabled")
+
+    q = queue.Queue()
+
+    def _worker():
+        with PROCESSING_LOCK:
+            q.put("--- starting ---\n")
+            try:
+                with contextlib.redirect_stdout(_QueueWriter(q)):
+                    target_fn(*args, **kwargs)
+                q.put("\n--- done ---\n")
+            except Exception as e:
+                q.put(f"\n[!] Failed: {e}\n")
+        q.put(None)
+
+    def _poll():
+        drained = False
+        while True:
+            try:
+                item = q.get_nowait()
+            except queue.Empty:
+                break
+            if item is None:
+                status_lbl.configure(text="Done")
+                return
+            log.configure(state="normal")
+            log.insert("end", item)
+            log.see("end")
+            log.configure(state="disabled")
+            drained = True
+        if drained:
+            status_lbl.configure(text="Running...")
+        ROOT.after(200, _poll)
+
+    threading.Thread(target=_worker, daemon=True).start()
+    ROOT.after(200, _poll)
+    return frame
+
+
+def on_app_close():
+    from tkinter import messagebox
+    is_downloading = APP_STATE.get("is_downloading")
+    if is_downloading and is_downloading() and not messagebox.askyesno(
+            "Download in progress", "A model is downloading. Quit anyway?\n"
+            "(It will resume next time.)", parent=ROOT):
+        return
+    for tab_id in list(NOTEBOOK.tabs()):
+        frame = NOTEBOOK.nametowidget(tab_id)
+        cb = getattr(frame, "on_close", None)
+        if cb:
+            try:
+                cb()
+            except Exception:
+                pass
+    ROOT.destroy()
+
+
+# ---------------------------------------------------------------- home tab (settings)
+def build_home_tab(parent_frame, online_var, on_start):
+    """Model / language / source picker. Lives in the persistent Home tab - Start opens
+    the chosen feature as a NEW tab instead of replacing this one."""
     import tkinter as tk
     from tkinter import messagebox, ttk
 
@@ -847,18 +977,14 @@ def choose_settings(online: bool):
 
     saved = load_settings()
     status = {n: is_downloaded(n) for n, _, _ in WHISPER_MODELS}
-    st = {"selected": None, "downloading": None, "progress": 0,
-          "errors": {}, "finished": None, "result": None}
+    st = {"selected": None, "downloading": None, "progress": 0, "errors": {}, "finished": None}
     pref = saved.get("model", WHISPER_MODEL)
     st["selected"] = pref if status.get(pref) else next(
         (n for n, _, _ in WHISPER_MODELS if status[n]), None)
+    APP_STATE["is_downloading"] = lambda: bool(st["downloading"])
 
-    root = tk.Tk()
-    root.title("Video Summarizer - Settings")
+    root = parent_frame
     root.configure(bg=WHITE)
-    root.resizable(False, False)
-    root.attributes("-topmost", True)
-    root.after(800, lambda: root.attributes("-topmost", False))
 
     def heading(text, top=8):
         tk.Label(root, text=text, bg=WHITE, font=(FONT, 12, "bold")).pack(
@@ -872,8 +998,8 @@ def choose_settings(online: bool):
     info = tk.Frame(root, bg=WHITE)
     info.pack(anchor="w", padx=16)
     small(info, "Green = downloaded (click to select)    Grey = not downloaded (click to download)").pack(side="left")
-    tk.Label(info, text=("    ● Internet connected" if online else "    ● Offline - downloads unavailable"),
-             bg=WHITE, fg=(GREEN if online else RED), font=(FONT, 9, "bold")).pack(side="left")
+    online_lbl = tk.Label(info, bg=WHITE, font=(FONT, 9, "bold"))
+    online_lbl.pack(side="left")
 
     listf = tk.Frame(root, bg=WHITE)
     listf.pack(fill="x", padx=12, pady=(4, 0))
@@ -922,10 +1048,10 @@ def choose_settings(online: bool):
         vocab_btn.configure(text=f"Edit list ({n} terms)" if n else "Add names / terms")
 
     def edit_vocab():
-        w = tk.Toplevel(root)
+        w = tk.Toplevel(ROOT)
         w.title("Custom vocabulary")
         w.configure(bg=WHITE)
-        w.transient(root)
+        w.transient(ROOT)
         w.grab_set()
         tk.Label(w, bg=WHITE, justify="left", font=(FONT, 9),
                  text="One name, term or abbreviation per line (any language).\n"
@@ -975,7 +1101,7 @@ def choose_settings(online: bool):
     srcf = tk.Frame(root, bg=WHITE)
     srcf.pack(fill="x", padx=12, pady=(4, 0))
     mode0 = saved.get("mode", "file")
-    if mode0 == "url" and not online:
+    if mode0 == "url" and not online_var.get():
         mode0 = "file"
     src_var = tk.StringVar(value=mode0)
     url_var = tk.StringVar()
@@ -986,6 +1112,7 @@ def choose_settings(online: bool):
         b = tk.Radiobutton(srcf, text=text, variable=src_var, value=value, bg=WHITE,
                            activebackground=WHITE, font=(FONT, 10), bd=0, highlightthickness=0, **kw)
         b.grid(row=r, column=c, sticky="w", padx=(0, 14), pady=1)
+        return b
 
     def check(text, var, r, c):
         tk.Checkbutton(srcf, text=text, variable=var, bg=WHITE, activebackground=WHITE,
@@ -993,9 +1120,8 @@ def choose_settings(online: bool):
 
     radio("Video / audio file", "file", 0, 0)
     radio("Folder (batch)", "folder", 0, 1)
-    radio("YouTube / link:", "url", 0, 2, state=("normal" if online else "disabled"))
-    url_entry = tk.Entry(srcf, textvariable=url_var, width=30, font=(FONT, 9),
-                         state=("normal" if online else "disabled"))
+    url_radio = radio("YouTube / link:", "url", 0, 2)
+    url_entry = tk.Entry(srcf, textvariable=url_var, width=30, font=(FONT, 9))
     url_entry.grid(row=0, column=3, sticky="w")
     url_entry.bind("<FocusIn>", lambda e: src_var.set("url"))
     radio("Live microphone", "mic", 1, 0)
@@ -1014,50 +1140,8 @@ def choose_settings(online: bool):
     tk.Entry(extra, textvariable=to_var, width=8, font=(FONT, 9)).pack(side="left", padx=(2, 4))
     small(extra, "e.g. 10:00 to 25:00  (file / link; blank = all)").pack(side="left")
 
-    # ---- voice cleanup (noise removal + voice isolation)
-    nrow = tk.Frame(root, bg=WHITE)
-    nrow.pack(fill="x", padx=12, pady=(6, 0))
-    tk.Label(nrow, text="Voice cleanup:", bg=WHITE, font=(FONT, 10, "bold")).pack(side="left")
-    saved_noise = {"ai": "studio"}.get(saved.get("noise", "off"), saved.get("noise", "off"))
-    noise_var = tk.StringVar(value=dict((v, l) for l, v in NOISE_CHOICES).get(saved_noise, "Off"))
-    noise_box = ttk.Combobox(nrow, textvariable=noise_var, values=[l for l, _ in NOISE_CHOICES],
-                             state="readonly", width=22)
-    noise_box.pack(side="left", padx=6)
-    keep_var = tk.BooleanVar(value=saved.get("keep_clean", False))
-    tk.Checkbutton(nrow, text="also save the cleaned voice (to listen to)", variable=keep_var, bg=WHITE,
-                   activebackground=WHITE, font=(FONT, 9), bd=0, highlightthickness=0).pack(side="left", padx=6)
-    key_btn = tk.Button(nrow, font=(FONT, 9), relief="flat", bg="#e8f0fe", padx=10,
-                        command=lambda: ask_key())
-    noise_help = small(root, "", anchor="w", justify="left", wraplength=860)
-    noise_help.pack(fill="x", padx=16)
-
-    def key_text():
-        key_btn.configure(text="ElevenLabs key saved - change" if elevenlabs_key() else "Enter ElevenLabs API key")
-
-    def ask_key():
-        from tkinter import simpledialog
-        k = simpledialog.askstring(
-            "ElevenLabs API key",
-            "Paste your ElevenLabs API key\n(elevenlabs.io > Developers > API keys).\n"
-            "It is saved only on this PC, in the settings file.", show="*", parent=root)
-        if k and k.strip():
-            s = load_settings()
-            s["elevenlabs_key"] = k.strip()
-            save_settings(s)
-        key_text()
-
-    def on_noise(*_):
-        v = dict(NOISE_CHOICES)[noise_var.get()]
-        noise_help.configure(text=NOISE_HELP[v])
-        if v == "online":
-            key_text()
-            key_btn.pack(side="right")
-            if not elevenlabs_key():
-                root.after(100, ask_key)
-        else:
-            key_btn.pack_forget()
-    noise_box.bind("<<ComboboxSelected>>", on_noise)
-    on_noise()
+    small(root, "Voice cleanup is configured in its own \"Voice Cleanup\" tab.").pack(
+        anchor="w", padx=16, pady=(6, 0))
 
     hint = small(root, "")
     hint.pack(anchor="w", padx=16, pady=(8, 0))
@@ -1069,9 +1153,7 @@ def choose_settings(online: bool):
                           activeforeground="white", relief="flat", padx=14, pady=6)
     start_btn.pack(side="right")
     tk.Button(btns, text="History", font=(FONT, 10), relief="flat", padx=12, pady=6,
-              command=lambda: open_history(root)).pack(side="left")
-    tk.Button(btns, text="Cancel", font=(FONT, 10), relief="flat", padx=12, pady=6,
-              command=lambda: close()).pack(side="left", padx=6)
+              command=lambda: open_history_tab()).pack(side="left")
 
     START_TEXT = {"file": "Select video & start  ▶", "folder": "Select folder & start  ▶",
                   "url": "Download & start  ▶", "mic": "Start microphone  ▶",
@@ -1093,7 +1175,7 @@ def choose_settings(online: bool):
             elif name in st["errors"]:
                 color, text = RED, "Failed - click to retry"
             else:
-                color, text = GREY, ("Click to download" if online else "Not downloaded")
+                color, text = GREY, ("Click to download" if online_var.get() else "Not downloaded")
             dot.configure(fg=color)
             title.configure(fg=color)
             stat.configure(fg=color, text=text)
@@ -1104,7 +1186,7 @@ def choose_settings(online: bool):
             hint.configure(text="Downloading... it is saved for next time.")
         elif not ok:
             hint.configure(text="Download at least one model to continue."
-                           if online else "No model downloaded yet - connect to the internet once.")
+                           if online_var.get() else "No model downloaded yet - connect to the internet once.")
         else:
             hint.configure(text="Tip: for live microphone / system audio / call / captions, "
                                 "tiny / base / small give the quickest on-screen text.")
@@ -1142,7 +1224,7 @@ def choose_settings(online: bool):
         if st["downloading"]:
             messagebox.showinfo("Please wait", f"'{st['downloading']}' is still downloading.", parent=root)
             return
-        if not online:
+        if not online_var.get():
             messagebox.showwarning("Offline", "Connect to the internet to download this model.", parent=root)
             return
         size = next(s for n, s, _ in WHISPER_MODELS if n == name)
@@ -1181,42 +1263,30 @@ def choose_settings(online: bool):
                "language": None if spoken == "Auto-detect" else LANG_CODES.get(spoken),
                "outputs": outputs, "mode": mode,
                "skip_done": bool(skip_var.get()), "subfolders": bool(sub_var.get()),
-               "noise": dict(NOISE_CHOICES)[noise_var.get()], "speak_save": bool(speak_var.get()),
-               "keep_clean": bool(keep_var.get())}
-        if res["noise"] == "online" and not elevenlabs_key() and not messagebox.askyesno(
-                "ElevenLabs", "No ElevenLabs API key is saved, so Studio AI (offline) will be used instead.\n"
-                              "Continue?", parent=root):
-            return
-        s = load_settings()      # keep other saved things (caption style, alert words...)
+               "speak_save": bool(speak_var.get())}
+        s = load_settings()      # keep other saved things (voice cleanup, caption style, alerts...)
         s.update(res)
         save_settings(s)
         res.update(url=url, clip=clip)
-        st["result"] = res
-        root.destroy()
+        on_start(res)
 
-    def close():
-        if st["downloading"] and not messagebox.askyesno(
-                "Download in progress", "A model is downloading. Quit anyway?\n"
-                "(It will resume next time.)", parent=root):
-            return
-        root.destroy()
+    def _apply_online_state(*_):
+        ok = online_var.get()
+        online_lbl.configure(text=("    ● Internet connected" if ok else "    ● Offline - downloads unavailable"),
+                             fg=(GREEN if ok else RED))
+        url_radio.configure(state=("normal" if ok else "disabled"))
+        url_entry.configure(state=("normal" if ok else "disabled"))
+        refresh()
 
     start_btn.configure(command=start)
-    root.protocol("WM_DELETE_WINDOW", close)
-    refresh()
-    root.mainloop()
-    return st["result"]
+    online_var.trace_add("write", _apply_online_state)
+    _apply_online_state()
 
 
 def pick_video() -> str:
-    import tkinter as tk
     from tkinter import filedialog
-    root = tk.Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-    path = filedialog.askopenfilename(title="Select a video to summarize", filetypes=VIDEO_TYPES)
-    root.destroy()
-    return path
+    return filedialog.askopenfilename(parent=ROOT, title="Select a video to summarize",
+                                      filetypes=VIDEO_TYPES)
 
 
 # ---------------------------------------------------------------- Whisper
@@ -1987,8 +2057,8 @@ def stamped_from_entries(entries):
     return "\n".join(lines)
 
 
-def run_mic(cfg, online, source="mic"):
-    """Live transcription window.
+def run_mic(parent_frame, cfg, online, source="mic"):
+    """Live transcription tab.
     source: "mic" (microphone), "system" (PC sound), "call" (both: You + Them)."""
     call = source == "call"
     use_mic, use_sys = source in ("mic", "call"), source in ("system", "call")
@@ -2037,12 +2107,9 @@ def run_mic(cfg, online, source="mic"):
          "cap_on": False, "cap_lang": settings.get("caption_lang", CAP_FAST_EN),
          "alert_words": [], "pa": None}
 
-    # ---------------- window
-    root = tk.Tk()
-    root.title(f"Video Summarizer - Live {SRC_NAME.lower()}")
+    # ---------------- tab
+    root = parent_frame
     root.configure(bg=WHITE)
-    root.geometry("940x740")
-    root.minsize(800, 620)
 
     top = tk.Frame(root, bg=WHITE)
     top.pack(fill="x", padx=14, pady=(12, 4))
@@ -2130,7 +2197,7 @@ def run_mic(cfg, online, source="mic"):
     cl = ttk.Combobox(crow, textvariable=cap_lang_var, values=cap_choices, state="readonly", width=20)
     cl.pack(side="left", padx=6)
     tk.Button(crow, text="Caption settings...", font=(FONT, 9), relief="flat", bg="#e8f0fe",
-              command=lambda: caption_settings_window(root, cs, apply_captions)).pack(side="left")
+              command=lambda: caption_settings_window(ROOT, cs, apply_captions)).pack(side="left")
     arow = tk.Frame(root, bg=WHITE)
     arow.pack(fill="x", padx=14, pady=(4, 0))
     tk.Label(arow, text="Alert words:", bg=WHITE, font=(FONT, 10, "bold")).pack(side="left")
@@ -2441,8 +2508,8 @@ def run_mic(cfg, online, source="mic"):
     def toggle_captions():
         S["cap_on"] = bool(cap_var.get())
         if S["cap_on"] and not cap["bar"]:
-            cap["bar"] = CaptionBar(root, cs, on_moved=save_ui_settings,
-                                    on_settings=lambda: caption_settings_window(root, cs, apply_captions),
+            cap["bar"] = CaptionBar(ROOT, cs, on_moved=save_ui_settings,
+                                    on_settings=lambda: caption_settings_window(ROOT, cs, apply_captions),
                                     on_hide=lambda: (cap_var.set(False), toggle_captions()))
             cap_refresh()
         elif not S["cap_on"] and cap["bar"]:
@@ -2849,7 +2916,7 @@ def run_mic(cfg, online, source="mic"):
                 S["pa"].terminate()
             except Exception:
                 pass
-        root.destroy()
+        NOTEBOOK.forget(root)
 
     rec_btn.configure(command=toggle)
     tr_btn.configure(command=translate)
@@ -2858,9 +2925,8 @@ def run_mic(cfg, online, source="mic"):
     copy_btn.configure(command=copy)
     clear_btn.configure(command=clear)
     redo_btn.configure(command=redo)
-    root.protocol("WM_DELETE_WINDOW", on_close)
+    root.on_close = on_close
     poll()
-    root.mainloop()
 
 
 # ---------------------------------------------------------------- main
@@ -2927,15 +2993,13 @@ def add_history(kind, title, source, languages, duration, files):
     save_history(items)
 
 
-def open_history(parent=None):
-    """Window to browse and search everything processed so far."""
+def open_history(parent_frame):
+    """History tab: browse and search everything processed so far."""
     import tkinter as tk
     from tkinter import ttk, messagebox, scrolledtext
 
     FONT = "Segoe UI"
-    win = tk.Toplevel(parent) if parent else tk.Tk()
-    win.title("Video Summarizer - History")
-    win.geometry("980x620")
+    win = parent_frame
     win.configure(bg="#ffffff")
 
     top = tk.Frame(win, bg="#ffffff")
@@ -3110,19 +3174,12 @@ def open_history(parent=None):
     file_box.bind("<<ComboboxSelected>>", show_file)
     fill()
     q_entry.focus_set()
-    if not parent:
-        win.mainloop()
 
 
 # ---------------------------------------------------------------- sources
 def pick_folder() -> str:
-    import tkinter as tk
     from tkinter import filedialog
-    root = tk.Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-    path = filedialog.askdirectory(title="Select a folder of videos to process")
-    root.destroy()
+    path = filedialog.askdirectory(parent=ROOT, title="Select a folder of videos to process")
     return path
 
 
@@ -3339,7 +3396,7 @@ def _process(vpath, audio_src, offset, clip, cfg, model, online, kind, source, o
     return files
 
 
-def run_watch(folder: Path, cfg, model, online):
+def run_watch(folder: Path, cfg, model, online, stop_event=None):
     """Keep watching a folder; every new video that appears is processed automatically."""
     import traceback
     cfg = dict(cfg, clip=None)
@@ -3352,7 +3409,7 @@ def run_watch(folder: Path, cfg, model, online):
     print("=" * 70)
     seen, failed, done = {}, set(), 0
     try:
-        while True:
+        while not (stop_event and stop_event.is_set()):
             for f in list_videos(folder, recursive):
                 if f in failed or already_done(f):
                     continue
@@ -3391,10 +3448,14 @@ def run_watch(folder: Path, cfg, model, online):
                 finally:
                     keep_awake(False)
                 print(f"\n[{datetime.datetime.now():%H:%M:%S}] Watching {folder} ... "
-                      f"({done} processed so far, Ctrl+C to stop)")
-            time.sleep(WATCH_INTERVAL_SEC)
+                      f"({done} processed so far)")
+            if stop_event:
+                stop_event.wait(WATCH_INTERVAL_SEC)
+            else:
+                time.sleep(WATCH_INTERVAL_SEC)
     except KeyboardInterrupt:
-        print(f"\nStopped watching. {done} video(s) processed.")
+        pass
+    print(f"\nStopped watching. {done} video(s) processed.")
 
 
 def run_batch(items, cfg, model, online, report_dir: Path):
@@ -3446,76 +3507,104 @@ def run_batch(items, cfg, model, online, report_dir: Path):
         open_path(report)
 
 
-def main():
-    online = internet_ok()
-    print("Internet: " + ("connected" if online else "OFFLINE - using local tools only"))
-    if not online:
-        os.environ["HF_HUB_OFFLINE"] = "1"   # use cached models, don't try to download
+# ---------------------------------------------------------------- voice cleanup tab
+def build_voice_cleanup_tab(parent_frame, online_var):
+    """Dedicated Voice Cleanup module, shared by every feature (live capture, file,
+    folder, URL, watch). Changes save immediately - this is a standing settings surface,
+    not part of a Start flow. The Online/Offline toggle only changes its DEFAULT choice;
+    every option always stays selectable regardless of toggle position."""
+    import tkinter as tk
+    from tkinter import ttk
 
-    if SHOW_SETTINGS_WINDOW:
-        cfg = choose_settings(online)
-        if not cfg:
-            print("Cancelled.")
-            return
-    else:
-        cfg = {"model": WHISPER_MODEL, "language": SPOKEN_LANGUAGE, "outputs": OUTPUT_LANGUAGES,
-               "mode": "file", "skip_done": True, "subfolders": False, "noise": "off",
-               "speak_save": False, "clip": None}
-    mode = cfg.get("mode", "file")
-    global VOCAB
-    VOCAB = load_vocab()
-    if VOCAB:
-        print(f"Custom vocabulary: {len(VOCAB)} terms")
+    WHITE, MUTED = "#ffffff", "#5f6368"
+    FONT = "Segoe UI"
+    root = parent_frame
+    root.configure(bg=WHITE)
+    saved = load_settings()
 
-    if mode in ("mic", "system", "call"):
-        print(f"Live {dict(mic='microphone', system='system audio', call='call (mic + PC sound)')[mode]}"
-              f"  |  Model: {cfg['model']}")
-        run_mic(cfg, online, source=mode)
+    tk.Label(root, text="Voice cleanup (noise removal + voice isolation)", bg=WHITE,
+             font=(FONT, 12, "bold")).pack(anchor="w", padx=16, pady=(12, 4))
+    tk.Label(root, text="Used automatically by every feature - live capture, file, folder, URL, watch.",
+             bg=WHITE, fg=MUTED, font=(FONT, 9)).pack(anchor="w", padx=16)
+
+    nrow = tk.Frame(root, bg=WHITE)
+    nrow.pack(fill="x", padx=12, pady=(10, 0))
+    tk.Label(nrow, text="Mode:", bg=WHITE, font=(FONT, 10, "bold")).pack(side="left")
+    saved_noise = {"ai": "studio"}.get(saved.get("noise", "off"), saved.get("noise", "off"))
+    noise_var = tk.StringVar(value=dict((v, l) for l, v in NOISE_CHOICES).get(saved_noise, "Off"))
+    noise_box = ttk.Combobox(nrow, textvariable=noise_var, values=[l for l, _ in NOISE_CHOICES],
+                             state="readonly", width=22)
+    noise_box.pack(side="left", padx=6)
+    keep_var = tk.BooleanVar(value=saved.get("keep_clean", False))
+    tk.Checkbutton(nrow, text="also save the cleaned voice (to listen to)", variable=keep_var, bg=WHITE,
+                   activebackground=WHITE, font=(FONT, 9), bd=0, highlightthickness=0).pack(side="left", padx=6)
+    key_btn = tk.Button(nrow, font=(FONT, 9), relief="flat", bg="#e8f0fe", padx=10,
+                        command=lambda: ask_key())
+    noise_help = tk.Label(root, bg=WHITE, fg=MUTED, font=(FONT, 9), anchor="w", justify="left", wraplength=860)
+    noise_help.pack(fill="x", padx=16, pady=(4, 0))
+
+    def persist():
+        s = load_settings()
+        s["noise"] = dict(NOISE_CHOICES)[noise_var.get()]
+        s["keep_clean"] = bool(keep_var.get())
+        save_settings(s)
+
+    def key_text():
+        key_btn.configure(text="ElevenLabs key saved - change" if elevenlabs_key() else "Enter ElevenLabs API key")
+
+    def ask_key():
+        from tkinter import simpledialog
+        k = simpledialog.askstring(
+            "ElevenLabs API key",
+            "Paste your ElevenLabs API key\n(elevenlabs.io > Developers > API keys).\n"
+            "It is saved only on this PC, in the settings file.", show="*", parent=ROOT)
+        if k and k.strip():
+            s = load_settings()
+            s["elevenlabs_key"] = k.strip()
+            save_settings(s)
+        key_text()
+
+    def on_noise(*_):
+        v = dict(NOISE_CHOICES)[noise_var.get()]
+        noise_help.configure(text=NOISE_HELP[v])
+        if v == "online":
+            key_text()
+            key_btn.pack(side="right")
+            if not elevenlabs_key():
+                root.after(100, ask_key)
+        else:
+            key_btn.pack_forget()
+        persist()
+
+    def default_by_online(*_):
+        target = "online" if online_var.get() else "studio"
+        noise_var.set(dict((v, l) for l, v in NOISE_CHOICES).get(target, noise_var.get()))
+        on_noise()
+
+    noise_box.bind("<<ComboboxSelected>>", on_noise)
+    keep_var.trace_add("write", lambda *_: persist())
+    online_var.trace_add("write", default_by_online)
+    on_noise()
+
+
+# ---------------------------------------------------------------- history tab (on demand)
+def open_history_tab():
+    existing = APP_STATE.get("history_frame")
+    if existing is not None and existing.winfo_exists():
+        NOTEBOOK.select(existing)
         return
-    print(f"Model: {cfg['model']}  |  Spoken: {lang_name(cfg['language']) if cfg['language'] else 'auto-detect'}"
-          f"  |  Output: {', '.join(cfg['outputs'])}")
+    frame = open_feature_tab("History", open_history)
+    APP_STATE["history_frame"] = frame
 
-    items, report_dir = [], SAVE_DIR
-    if mode == "watch":
-        folder = pick_folder()
-        if not folder:
-            print("No folder selected.")
-            return
-        model = load_whisper(cfg["model"])
-        run_watch(Path(folder), cfg, model, online)
+
+# ---------------------------------------------------------------- feature dispatch
+def _run_url_job(cfg, model, online):
+    """URL mode: download via yt-dlp, then process like a file/folder job."""
+    items = [{"path": p, "kind": "url", "source": page} for p, _, page in download_url(cfg["url"])]
+    if not items:
         return
-    if mode == "file":
-        video = pick_video()
-        if not video:
-            print("No file selected.")
-            return
-        items = [{"path": Path(video), "kind": "file"}]
-    elif mode == "folder":
-        folder = pick_folder()
-        if not folder:
-            print("No folder selected.")
-            return
-        report_dir = Path(folder)
-        vids = list_videos(report_dir, cfg.get("subfolders", False))
-        skipped = [v for v in vids if cfg.get("skip_done", True) and already_done(v)]
-        todo = [v for v in vids if v not in skipped]
-        print(f"\nFolder: {folder}\n  {len(vids)} video/audio files found, "
-              f"{len(skipped)} already done (skipped), {len(todo)} to process.")
-        if not todo:
-            print("Nothing to do.")
-            return
-        items = [{"path": v, "kind": "file"} for v in todo]
-    elif mode == "url":
-        if not online:
-            print("[!] Downloading a link needs internet.")
-            return
-        items = [{"path": p, "kind": "url", "source": page} for p, _, page in download_url(cfg["url"])]
-        if not items:
-            return
-        print(f"  Saved in: {SAVE_DIR / 'Downloads'}")
-
-    model = load_whisper(cfg["model"])
-    if len(items) == 1 and mode != "folder":
+    print(f"  Saved in: {SAVE_DIR / 'Downloads'}")
+    if len(items) == 1:
         keep_awake(True)
         try:
             process_video(items[0]["path"], cfg, model, online, kind=items[0]["kind"],
@@ -3523,7 +3612,119 @@ def main():
         finally:
             keep_awake(False)
     else:
-        run_batch(items, cfg, model, online, report_dir)
+        run_batch(items, cfg, model, online, SAVE_DIR)
+
+
+def launch_feature(res, online_var):
+    """Home's Start button: open the chosen feature as a NEW tab. Home stays as it was."""
+    from tkinter import messagebox
+    online = online_var.get()
+    mode = res.get("mode", "file")
+    s = load_settings()               # Voice Cleanup tab is the source of truth for these
+    res["noise"] = s.get("noise", "off")
+    res["keep_clean"] = s.get("keep_clean", False)
+
+    global VOCAB
+    VOCAB = load_vocab()
+
+    if mode in ("mic", "system", "call"):
+        label = {"mic": "Live Mic", "system": "Live System Audio", "call": "Live Call"}[mode]
+        open_feature_tab(label, run_mic, res, online, source=mode)
+        return
+
+    if mode == "watch":
+        folder = pick_folder()
+        if not folder:
+            return
+        model = load_whisper(res["model"])
+        open_log_tab(f"Watch: {Path(folder).name}", run_watch, Path(folder), res, model, online,
+                     stoppable=True, stop_event=threading.Event())
+        return
+
+    if mode == "file":
+        video = pick_video()
+        if not video:
+            return
+        model = load_whisper(res["model"])
+        open_log_tab(f"File: {Path(video).name}", process_video, Path(video), res, model, online,
+                     kind="file", source=None, open_result=True)
+        return
+
+    if mode == "folder":
+        folder = pick_folder()
+        if not folder:
+            return
+        report_dir = Path(folder)
+        vids = list_videos(report_dir, res.get("subfolders", False))
+        skipped = [v for v in vids if res.get("skip_done", True) and already_done(v)]
+        todo = [v for v in vids if v not in skipped]
+        if not todo:
+            messagebox.showinfo("Folder", f"{len(vids)} file(s) found - all {len(skipped)} already done.",
+                                parent=ROOT)
+            return
+        items = [{"path": v, "kind": "file"} for v in todo]
+        model = load_whisper(res["model"])
+        open_log_tab(f"Folder: {report_dir.name}", run_batch, items, res, model, online, report_dir)
+        return
+
+    if mode == "url":
+        if not online:
+            messagebox.showwarning("Offline", "Downloading a link needs internet.", parent=ROOT)
+            return
+        model = load_whisper(res["model"])
+        open_log_tab("URL", _run_url_job, res, model, online)
+        return
+
+
+# ---------------------------------------------------------------- main
+def main():
+    global ROOT, NOTEBOOK
+    import tkinter as tk
+    from tkinter import ttk
+
+    online0 = internet_ok()
+    saved = load_settings()
+
+    ROOT = tk.Tk()
+    ROOT.title("Cursed_Vishleshan")
+    ROOT.geometry("980x760")
+    ROOT.minsize(800, 600)
+
+    toolbar = tk.Frame(ROOT, bg="#f1f3f4")
+    toolbar.pack(fill="x", side="top")
+    online_var = tk.BooleanVar(value=saved.get("mode_online", online0))
+    APP_STATE["online_var"] = online_var
+    tk.Checkbutton(toolbar, text="Online", variable=online_var, bg="#f1f3f4",
+                   activebackground="#f1f3f4", font=("Segoe UI", 10, "bold")).pack(
+        side="left", padx=8, pady=4)
+    net_lbl = tk.Label(toolbar, text=("Internet: connected" if online0 else "Internet: offline"),
+                       bg="#f1f3f4", fg=("#1e8e3e" if online0 else "#c5221f"), font=("Segoe UI", 9))
+    net_lbl.pack(side="left", padx=6)
+
+    def _persist_online(*_):
+        s = load_settings()
+        s["mode_online"] = bool(online_var.get())
+        save_settings(s)
+        if online_var.get():
+            os.environ.pop("HF_HUB_OFFLINE", None)
+        else:
+            os.environ["HF_HUB_OFFLINE"] = "1"   # use cached models, don't try to download
+    online_var.trace_add("write", _persist_online)
+    _persist_online()
+
+    NOTEBOOK = ttk.Notebook(ROOT)
+    NOTEBOOK.pack(fill="both", expand=True)
+
+    home_frame = tk.Frame(NOTEBOOK, bg="#ffffff")
+    NOTEBOOK.add(home_frame, text="Home")
+    build_home_tab(home_frame, online_var, lambda res: launch_feature(res, online_var))
+
+    vc_frame = tk.Frame(NOTEBOOK, bg="#ffffff")
+    NOTEBOOK.add(vc_frame, text="Voice Cleanup")
+    build_voice_cleanup_tab(vc_frame, online_var)
+
+    ROOT.protocol("WM_DELETE_WINDOW", on_app_close)
+    ROOT.mainloop()
 
 
 if __name__ == "__main__":
