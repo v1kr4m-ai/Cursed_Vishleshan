@@ -965,9 +965,13 @@ def on_app_close():
 
 
 # ---------------------------------------------------------------- home tab (settings)
-def build_home_tab(parent_frame, online_var, on_start):
+def build_home_tab(parent_frame, online0, on_start):
     """Model / language / source picker. Lives in the persistent Home tab - Start opens
-    the chosen feature as a NEW tab instead of replacing this one."""
+    the chosen feature as a NEW tab instead of replacing this one.
+    online0 is REAL internet connectivity (checked once at startup) - it gates Whisper
+    model downloads and the URL/link mode, independently of the Online/Offline tool-
+    preference toggle (that toggle only changes which summarize/translate/cleanup tool
+    is tried by default - see launch_feature() / build_voice_cleanup_tab())."""
     import tkinter as tk
     from tkinter import messagebox, ttk
 
@@ -1101,7 +1105,7 @@ def build_home_tab(parent_frame, online_var, on_start):
     srcf = tk.Frame(root, bg=WHITE)
     srcf.pack(fill="x", padx=12, pady=(4, 0))
     mode0 = saved.get("mode", "file")
-    if mode0 == "url" and not online_var.get():
+    if mode0 == "url" and not online0:
         mode0 = "file"
     src_var = tk.StringVar(value=mode0)
     url_var = tk.StringVar()
@@ -1175,7 +1179,7 @@ def build_home_tab(parent_frame, online_var, on_start):
             elif name in st["errors"]:
                 color, text = RED, "Failed - click to retry"
             else:
-                color, text = GREY, ("Click to download" if online_var.get() else "Not downloaded")
+                color, text = GREY, ("Click to download" if online0 else "Not downloaded")
             dot.configure(fg=color)
             title.configure(fg=color)
             stat.configure(fg=color, text=text)
@@ -1186,7 +1190,7 @@ def build_home_tab(parent_frame, online_var, on_start):
             hint.configure(text="Downloading... it is saved for next time.")
         elif not ok:
             hint.configure(text="Download at least one model to continue."
-                           if online_var.get() else "No model downloaded yet - connect to the internet once.")
+                           if online0 else "No model downloaded yet - connect to the internet once.")
         else:
             hint.configure(text="Tip: for live microphone / system audio / call / captions, "
                                 "tiny / base / small give the quickest on-screen text.")
@@ -1224,7 +1228,7 @@ def build_home_tab(parent_frame, online_var, on_start):
         if st["downloading"]:
             messagebox.showinfo("Please wait", f"'{st['downloading']}' is still downloading.", parent=root)
             return
-        if not online_var.get():
+        if not online0:
             messagebox.showwarning("Offline", "Connect to the internet to download this model.", parent=root)
             return
         size = next(s for n, s, _ in WHISPER_MODELS if n == name)
@@ -1270,17 +1274,12 @@ def build_home_tab(parent_frame, online_var, on_start):
         res.update(url=url, clip=clip)
         on_start(res)
 
-    def _apply_online_state(*_):
-        ok = online_var.get()
-        online_lbl.configure(text=("    ● Internet connected" if ok else "    ● Offline - downloads unavailable"),
-                             fg=(GREEN if ok else RED))
-        url_radio.configure(state=("normal" if ok else "disabled"))
-        url_entry.configure(state=("normal" if ok else "disabled"))
-        refresh()
-
+    online_lbl.configure(text=("    ● Internet connected" if online0 else "    ● Offline - downloads unavailable"),
+                         fg=(GREEN if online0 else RED))
+    url_radio.configure(state=("normal" if online0 else "disabled"))
+    url_entry.configure(state=("normal" if online0 else "disabled"))
     start_btn.configure(command=start)
-    online_var.trace_add("write", _apply_online_state)
-    _apply_online_state()
+    refresh()
 
 
 def pick_video() -> str:
@@ -3774,14 +3773,13 @@ def main():
                        bg="#f1f3f4", fg=("#1e8e3e" if online0 else "#c5221f"), font=("Segoe UI", 9))
     net_lbl.pack(side="left", padx=6)
 
+    if not online0:   # REAL connectivity, not the tool-preference toggle above
+        os.environ["HF_HUB_OFFLINE"] = "1"   # use cached models, don't try to download
+
     def _persist_online(*_):
         s = load_settings()
         s["mode_online"] = bool(online_var.get())
         save_settings(s)
-        if online_var.get():
-            os.environ.pop("HF_HUB_OFFLINE", None)
-        else:
-            os.environ["HF_HUB_OFFLINE"] = "1"   # use cached models, don't try to download
     online_var.trace_add("write", _persist_online)
     _persist_online()
 
@@ -3790,7 +3788,7 @@ def main():
 
     home_frame = tk.Frame(NOTEBOOK, bg="#ffffff")
     NOTEBOOK.add(home_frame, text="Home")
-    build_home_tab(home_frame, online_var, lambda res: launch_feature(res, online_var))
+    build_home_tab(home_frame, online0, lambda res: launch_feature(res, online_var))
 
     vc_frame = tk.Frame(NOTEBOOK, bg="#ffffff")
     NOTEBOOK.add(vc_frame, text="Voice Cleanup")
