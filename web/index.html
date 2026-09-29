@@ -92,13 +92,75 @@
   </main>
 
   <main id="view-cleanup" class="view">
-    <div class="card"><h2>Voice Cleanup</h2><p class="muted">Coming in the next update.</p></div>
+    <h1 class="welcome">Voice Cleanup</h1>
+    <p class="muted" style="margin:-12px 0 20px;">Used automatically by every feature - live capture, file, folder, URL, watch.</p>
+    <div class="card full" style="margin-bottom:16px;">
+      <h2>Mode</h2>
+      <div class="sourcegrid" id="noiseGrid"></div>
+      <p class="muted small" id="noiseHelp"></p>
+      <div class="rowflex" id="keyRow" style="display:none; margin-top:10px;">
+        <input type="password" id="keyInput" class="select" style="max-width:280px;" placeholder="ElevenLabs API key">
+        <button class="ghostbtn" id="saveKeyBtn">Save key</button>
+        <span class="muted small" id="keyStatus"></span>
+      </div>
+      <label class="checkrow" style="margin-top:12px;">
+        <input type="checkbox" id="keepCleanChk"> Also save the cleaned voice (to listen to)
+      </label>
+    </div>
+
+    <div class="card full" style="margin-bottom:16px;">
+      <h2>Clean up a file</h2>
+      <p class="muted small">Pick an audio or video file - its audio is cleaned using the Mode above and saved as a .wav.</p>
+      <div id="cuTool"></div>
+    </div>
+
+    <div class="card full">
+      <h2>Extract background music from a song</h2>
+      <p class="muted small">Pick a song or video - the instrumental (vocals removed) is saved as a stereo .wav via Demucs (Offline).</p>
+      <div id="muTool"></div>
+    </div>
   </main>
+
   <main id="view-offline" class="view">
-    <div class="card"><h2>Offline Settings</h2><p class="muted">Coming in the next update.</p></div>
+    <h1 class="welcome">Offline Settings</h1>
+    <p class="muted" style="margin:-12px 0 20px;">Pick which installed model Ollama / LM Studio uses for summaries and translations.</p>
+    <div class="card full" style="margin-bottom:16px;">
+      <h2>Ollama</h2>
+      <div class="rowflex">
+        <select id="ollamaSelect" class="select" style="max-width:360px;"></select>
+        <button class="ghostbtn" id="ollamaRefresh">Refresh list</button>
+      </div>
+      <p class="muted small" id="ollamaStatus"></p>
+    </div>
+    <div class="card full">
+      <h2>LM Studio</h2>
+      <div class="rowflex">
+        <select id="lmstudioSelect" class="select" style="max-width:360px;"></select>
+        <button class="ghostbtn" id="lmstudioRefresh">Refresh list</button>
+      </div>
+      <p class="muted small" id="lmstudioStatus"></p>
+    </div>
   </main>
+
   <main id="view-history" class="view">
-    <div class="card"><h2>History</h2><p class="muted">Coming in the next update.</p></div>
+    <h1 class="welcome">History</h1>
+    <div class="card full" style="margin-bottom:16px;">
+      <input type="text" id="historySearch" class="select" placeholder="Search titles, languages, transcripts and summaries...">
+    </div>
+    <div class="historysplit">
+      <div class="card historylist" id="historyList"></div>
+      <div class="card historypreview">
+        <div class="rowflex" style="margin-bottom:10px;">
+          <select id="historyFileSelect" class="select"></select>
+        </div>
+        <pre class="historytext" id="historyText"></pre>
+        <div class="rowflex" style="margin-top:12px;">
+          <button class="startbtn small" id="historyOpenBtn">Open file</button>
+          <button class="ghostbtn" id="historyFolderBtn">Show in folder</button>
+          <button class="ghostbtn danger" id="historyRemoveBtn">Remove</button>
+        </div>
+      </div>
+    </div>
   </main>
 </div>
 

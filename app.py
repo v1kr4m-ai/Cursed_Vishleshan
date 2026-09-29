@@ -8,8 +8,11 @@ no processing logic belongs here.
 Stage 1: shell + Home tab (model picker with real download progress, language/source
 picker, settings persistence). Job dispatch (Start) is a stub until Stage 3.
 """
+import contextlib
+import datetime
 import json
 import threading
+import uuid
 from pathlib import Path
 
 import webview
@@ -21,6 +24,37 @@ WEB_DIR = Path(__file__).with_name("web")
 
 def _noise_label(value: str) -> str:
     return dict((v, l) for l, v in vs.NOISE_CHOICES).get(value, "Off")
+
+
+class _JobPusher:
+    """File-like object that streams print() output to the JS side as it happens."""
+    def __init__(self, api, job_id):
+        self.api, self.job_id = api, job_id
+
+    def write(self, s):
+        if s:
+            self.api._push("onJobLog", self.job_id, s)
+
+    def flush(self):
+        pass
+
+
+def _run_job(api, target_fn, *args, **kwargs):
+    """Run target_fn in a background thread (one job at a time, like the Tk app's
+    PROCESSING_LOCK), streaming its print() output to the given job's log panel."""
+    job_id = str(uuid.uuid4())
+
+    def worker():
+        with vs.PROCESSING_LOCK:
+            try:
+                with contextlib.redirect_stdout(_JobPusher(api, job_id)):
+                    target_fn(*args, **kwargs)
+            except Exception as e:
+                api._push("onJobLog", job_id, f"\n[!] {e}\n")
+            finally:
+                api._push("onJobDone", job_id)
+    threading.Thread(target=worker, daemon=True).start()
+    return job_id
 
 
 class Api:
@@ -104,6 +138,123 @@ class Api:
         # Stage 3 wires real jobs (file/folder/url/watch/mic/system/call) here.
         return {"ok": False, "message": "Job dispatch lands in the next update - "
                                         "this stage is the Home tab shell only."}
+
+    def _online(self):
+        s = vs.load_settings()
+        return bool(s.get("mode_online", vs.internet_ok()))
+
+    # ---------------------------------------------------------------- Voice Cleanup tab
+    def get_voice_cleanup(self):
+        s = vs.load_settings()
+        return {
+            "choices": [l for l, _ in vs.NOISE_CHOICES],
+            "values": [v for _, v in vs.NOISE_CHOICES],
+            "help": vs.NOISE_HELP,
+            "noise": s.get("noise", "off"),
+            "keepClean": bool(s.get("keep_clean", False)),
+            "hasKey": bool(vs.elevenlabs_key()),
+        }
+
+    def save_voice_cleanup(self, data):
+        s = vs.load_settings()
+        s["noise"] = data.get("noise", "off")
+        s["keep_clean"] = bool(data.get("keepClean", False))
+        vs.save_settings(s)
+        return True
+
+    def save_key(self, key):
+        if key and key.strip():
+            vs.save_elevenlabs_key(key.strip())
+        return bool(vs.elevenlabs_key())
+
+    def start_cleanup_job(self, src_path, out_dir, noise_mode):
+        out_dir = Path(out_dir) if out_dir else Path(src_path).parent
+        return _run_job(self, vs._run_cleanup_job, Path(src_path), out_dir, noise_mode, self._online())
+
+    def start_music_job(self, src_path, out_dir):
+        out_dir = Path(out_dir) if out_dir else Path(src_path).parent
+        return _run_job(self, vs._run_music_job, Path(src_path), out_dir)
+
+    # ---------------------------------------------------------------- Offline Settings tab
+    def get_offline_settings(self):
+        s = vs.load_settings()
+
+        def safe_list(fn):
+            try:
+                return fn(), None
+            except Exception as e:
+                return [], str(e)[:200]
+
+        ollama, ollama_err = safe_list(vs.list_ollama_models)
+        lmstudio, lmstudio_err = safe_list(vs.list_lmstudio_models)
+        return {
+            "ollamaModels": ollama, "ollamaErr": ollama_err, "ollamaPicked": s.get("ollama_model", ""),
+            "lmstudioModels": lmstudio, "lmstudioErr": lmstudio_err,
+            "lmstudioPicked": s.get("lmstudio_model", ""),
+        }
+
+    def save_offline_model(self, kind, name):
+        s = vs.load_settings()
+        s[f"{kind}_model"] = name
+        vs.save_settings(s)
+        return True
+
+    # ---------------------------------------------------------------- History tab
+    def get_history(self, query=""):
+        items = list(reversed(vs.load_history()))
+        q = (query or "").strip().lower()
+
+        def text_of(path):
+            try:
+                return Path(path).read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                return ""
+
+        def readable(e):
+            return [f for f in e.get("files", []) if f.lower().endswith((".txt", ".md"))]
+
+        def matches(e):
+            if not q:
+                return True
+            meta = f"{e.get('title', '')} {e.get('source', '')} {e.get('languages', '')}".lower()
+            return q in meta or any(q in text_of(f).lower() for f in readable(e))
+
+        out = []
+        for e in items:
+            if not matches(e):
+                continue
+            try:
+                when = datetime.datetime.fromisoformat(e["time"]).strftime("%d %b %Y %H:%M")
+            except Exception:
+                when = e.get("time", "")
+            out.append({
+                "time": e.get("time"), "title": e.get("title", ""),
+                "when": when, "kind": vs.KIND_LABELS.get(e.get("kind"), e.get("kind", "")),
+                "languages": e.get("languages", ""), "length": vs.fmt(e.get("duration") or 0),
+                "files": [{"path": f, "name": Path(f).name} for f in readable(e)],
+                "exists": any(Path(f).exists() for f in e.get("files", [])),
+            })
+        return out
+
+    def read_history_file(self, path):
+        try:
+            return Path(path).read_text(encoding="utf-8", errors="replace")
+        except Exception as e:
+            return f"(Could not read file: {e})"
+
+    def open_history_file(self, path):
+        vs.open_path(path)
+        return True
+
+    def open_history_folder(self, path):
+        vs.open_path(path, select=True)
+        return True
+
+    def remove_history_item(self, time_, title):
+        items = vs.load_history()
+        items = [x for x in items if not (x.get("time") == time_ and x.get("title") == title)]
+        vs.save_history(items)
+        return True
 
     # ---------------------------------------------------------------- plumbing
     def _push(self, fn, *args):

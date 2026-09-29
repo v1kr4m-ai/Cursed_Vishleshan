@@ -38,12 +38,41 @@ const MOCK_HOME = {
   noiseLabel: "Studio AI - Demucs + DeepFilterNet (Offline)",
 };
 
+const MOCK_CLEANUP = {
+  choices: ["Off", "Light filter (Offline)", "Strong filter (Offline)",
+    "Studio AI - Demucs + DeepFilterNet (Offline)", "ElevenLabs Voice Isolator (Online)"],
+  values: ["off", "light", "strong", "studio", "online"],
+  help: {
+    off: "No cleanup.", light: "Quick, gentle hiss/hum reduction.",
+    strong: "Quick, heavy noise reduction.",
+    studio: "Demucs isolates voices, then DeepFilterNet removes noise.",
+    online: "ElevenLabs Voice Isolator - needs an API key.",
+  },
+  noise: "studio", keepClean: false, hasKey: false,
+};
+const MOCK_OFFLINE = {
+  ollamaModels: ["phi4:latest", "llama3.2:latest", "qwen2.5:7b"], ollamaErr: null, ollamaPicked: "phi4:latest",
+  lmstudioModels: [], lmstudioErr: "LM Studio server not running.", lmstudioPicked: "",
+};
+const MOCK_HISTORY = [
+  { time: "2026-09-20T10:00:00", title: "Team meeting", when: "20 Sep 2026 10:00", kind: "Video",
+    languages: "English", length: "00:12:30",
+    files: [{ path: "C:/fake/meeting_transcript.txt", name: "meeting_transcript.txt" }], exists: true },
+];
+
 function callApi(name, ...args) {
   if (window.pywebview && window.pywebview.api && window.pywebview.api[name]) {
     return window.pywebview.api[name](...args);
   }
   console.warn("[mock]", name, args);
   if (name === "get_home_data") return Promise.resolve(MOCK_HOME);
+  if (name === "get_voice_cleanup") return Promise.resolve(MOCK_CLEANUP);
+  if (name === "get_offline_settings") return Promise.resolve(MOCK_OFFLINE);
+  if (name === "get_history") return Promise.resolve(MOCK_HISTORY);
+  if (name === "read_history_file") return Promise.resolve("(mock file contents)");
+  if (name === "pick_file") return Promise.resolve("C:/fake/song.mp3");
+  if (name === "pick_folder") return Promise.resolve("C:/fake/out");
+  if (name.startsWith("start_")) return Promise.resolve("mock-job-" + Math.random().toString(36).slice(2));
   return Promise.resolve({ ok: true, mock: true });
 }
 
@@ -195,14 +224,199 @@ function persistHome() {
   });
 }
 
+const TAB_LOADERS = { cleanup: loadCleanupTab, offline: loadOfflineTab, history: () => loadHistoryTab() };
+
 function wireNav() {
   document.querySelectorAll(".pill").forEach((btn) => btn.addEventListener("click", () => {
     document.querySelectorAll(".pill").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
     document.getElementById("view-" + btn.dataset.tab).classList.add("active");
+    if (TAB_LOADERS[btn.dataset.tab]) TAB_LOADERS[btn.dataset.tab]();
   }));
 }
+
+// ---------------------------------------------------------------- job log panels
+const jobLogs = {};
+
+window.onJobLog = function (jobId, line) {
+  const j = jobLogs[jobId];
+  if (!j) return;
+  j.bodyEl.textContent += line;
+  j.bodyEl.scrollTop = j.bodyEl.scrollHeight;
+};
+window.onJobDone = function (jobId) {
+  const j = jobLogs[jobId];
+  if (!j) return;
+  j.statusEl.textContent = "Done";
+  j.statusEl.classList.add("done");
+};
+
+function addJobPanel(containerEl, jobId, title) {
+  const wrap = document.createElement("div");
+  wrap.className = "joblog";
+  wrap.innerHTML = `<div class="joblog-head"><span>${title}</span><span class="joblog-status">Running...</span></div>
+    <pre class="joblog-body"></pre>`;
+  containerEl.prepend(wrap);
+  jobLogs[jobId] = { statusEl: wrap.querySelector(".joblog-status"), bodyEl: wrap.querySelector(".joblog-body") };
+}
+
+// ---------------------------------------------------------------- Voice Cleanup tab
+let cleanupState = null;
+
+async function loadCleanupTab() {
+  cleanupState = await callApi("get_voice_cleanup");
+  renderNoiseGrid();
+  document.getElementById("keepCleanChk").checked = cleanupState.keepClean;
+  document.getElementById("keepCleanChk").onchange = (e) => {
+    cleanupState.keepClean = e.target.checked;
+    saveCleanup();
+  };
+  document.getElementById("saveKeyBtn").onclick = async () => {
+    const key = document.getElementById("keyInput").value;
+    const ok = await callApi("save_key", key);
+    document.getElementById("keyStatus").textContent = ok ? "Key saved." : "No key saved.";
+    document.getElementById("keyInput").value = "";
+  };
+  buildFileTool("cuTool", "Clean up", async (src, outDir) =>
+    callApi("start_cleanup_job", src, outDir, cleanupState.noise));
+  buildFileTool("muTool", "Extract music", async (src, outDir) =>
+    callApi("start_music_job", src, outDir));
+}
+
+function renderNoiseGrid() {
+  const grid = document.getElementById("noiseGrid");
+  grid.innerHTML = cleanupState.choices.map((label, i) =>
+    `<div class="sourcecard ${cleanupState.values[i] === cleanupState.noise ? "selected" : ""}"
+          data-value="${cleanupState.values[i]}">${label}</div>`).join("");
+  grid.querySelectorAll(".sourcecard").forEach((el) => el.addEventListener("click", () => {
+    cleanupState.noise = el.dataset.value;
+    renderNoiseGrid();
+    document.getElementById("keyRow").style.display = cleanupState.noise === "online" ? "flex" : "none";
+    saveCleanup();
+  }));
+  document.getElementById("noiseHelp").textContent = cleanupState.help[cleanupState.noise] || "";
+  document.getElementById("keyRow").style.display = cleanupState.noise === "online" ? "flex" : "none";
+  document.getElementById("keyStatus").textContent = cleanupState.hasKey ? "Key saved - change above." : "No key saved.";
+}
+
+function saveCleanup() {
+  callApi("save_voice_cleanup", { noise: cleanupState.noise, keepClean: cleanupState.keepClean });
+}
+
+function buildFileTool(containerId, verb, onRun) {
+  const el = document.getElementById(containerId);
+  const tool = { src: null, outDir: null };
+  el.innerHTML = `
+    <div class="pickrow"><button class="ghostbtn" data-a="src">Browse file...</button>
+      <span class="pickpath muted" data-t="src">(none selected)</span></div>
+    <div class="pickrow"><button class="ghostbtn" data-a="out">Browse folder...</button>
+      <span class="pickpath muted" data-t="out">(same folder as the file)</span></div>
+    <button class="startbtn small" data-a="run" disabled>${verb}&ensp;&#9654;</button>
+    <div class="joblogs"></div>`;
+  const runBtn = el.querySelector('[data-a="run"]');
+  el.querySelector('[data-a="src"]').addEventListener("click", async () => {
+    const path = await callApi("pick_file");
+    if (path) {
+      tool.src = path;
+      const t = el.querySelector('[data-t="src"]');
+      t.textContent = path.split(/[\\/]/).pop();
+      t.classList.remove("muted");
+      runBtn.disabled = false;
+    }
+  });
+  el.querySelector('[data-a="out"]').addEventListener("click", async () => {
+    const path = await callApi("pick_folder");
+    if (path) {
+      tool.outDir = path;
+      const t = el.querySelector('[data-t="out"]');
+      t.textContent = path;
+      t.classList.remove("muted");
+    }
+  });
+  runBtn.addEventListener("click", async () => {
+    const jobId = await onRun(tool.src, tool.outDir);
+    addJobPanel(el.querySelector(".joblogs"), jobId, tool.src.split(/[\\/]/).pop());
+  });
+}
+
+// ---------------------------------------------------------------- Offline Settings tab
+async function loadOfflineTab() {
+  const data = await callApi("get_offline_settings");
+  fillOfflineSelect("ollama", data.ollamaModels, data.ollamaPicked, data.ollamaErr);
+  fillOfflineSelect("lmstudio", data.lmstudioModels, data.lmstudioPicked, data.lmstudioErr);
+  document.getElementById("ollamaRefresh").onclick = loadOfflineTab;
+  document.getElementById("lmstudioRefresh").onclick = loadOfflineTab;
+}
+
+function fillOfflineSelect(kind, models, picked, err) {
+  const sel = document.getElementById(kind + "Select");
+  const AUTO = "(auto - first available)";
+  sel.innerHTML = [AUTO, ...models].map((m) =>
+    `<option ${m === (picked || AUTO) ? "selected" : ""}>${m}</option>`).join("");
+  sel.onchange = () => callApi("save_offline_model", kind, sel.value === AUTO ? "" : sel.value);
+  document.getElementById(kind + "Status").textContent =
+    err ? err : `${models.length} model(s) found.`;
+}
+
+// ---------------------------------------------------------------- History tab
+let historyItems = [];
+let historySelected = null;
+
+async function loadHistoryTab(query) {
+  historyItems = await callApi("get_history", query || "");
+  renderHistoryList();
+  document.getElementById("historySearch").oninput = (e) => loadHistoryTab(e.target.value);
+}
+
+function renderHistoryList() {
+  const list = document.getElementById("historyList");
+  if (!historyItems.length) {
+    list.innerHTML = `<div class="historyempty">Nothing processed yet.</div>`;
+    return;
+  }
+  list.innerHTML = historyItems.map((e, i) => `
+    <div class="historyrow ${e.exists ? "" : "missing"}" data-i="${i}">
+      <div>
+        <div class="historyrow-title">${e.title || "(untitled)"}</div>
+        <div class="historyrow-meta">${e.kind} - ${e.languages} - ${e.length}</div>
+      </div>
+      <div class="historyrow-when">${e.when}</div>
+    </div>`).join("");
+  list.querySelectorAll(".historyrow").forEach((row) =>
+    row.addEventListener("click", () => selectHistory(+row.dataset.i)));
+  if (historyItems.length) selectHistory(0);
+}
+
+function selectHistory(i) {
+  historySelected = historyItems[i];
+  document.querySelectorAll(".historyrow").forEach((r, idx) => r.classList.toggle("selected", idx === i));
+  const sel = document.getElementById("historyFileSelect");
+  sel.innerHTML = historySelected.files.map((f) => `<option>${f.name}</option>`).join("");
+  sel.onchange = showHistoryFile;
+  showHistoryFile();
+}
+
+async function showHistoryFile() {
+  const sel = document.getElementById("historyFileSelect");
+  const f = historySelected.files.find((x) => x.name === sel.value) || historySelected.files[0];
+  document.getElementById("historyText").textContent = f ? await callApi("read_history_file", f.path) : "";
+}
+
+document.getElementById("historyOpenBtn")?.addEventListener("click", () => {
+  const sel = document.getElementById("historyFileSelect");
+  const f = historySelected?.files.find((x) => x.name === sel.value) || historySelected?.files[0];
+  if (f) callApi("open_history_file", f.path);
+});
+document.getElementById("historyFolderBtn")?.addEventListener("click", () => {
+  const f = historySelected?.files[0];
+  if (f) callApi("open_history_folder", f.path);
+});
+document.getElementById("historyRemoveBtn")?.addEventListener("click", async () => {
+  if (!historySelected) return;
+  await callApi("remove_history_item", historySelected.time, historySelected.title);
+  loadHistoryTab();
+});
 
 function wireStart() {
   document.getElementById("startBtn").addEventListener("click", async () => {
