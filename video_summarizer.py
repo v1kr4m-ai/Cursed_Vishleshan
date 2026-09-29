@@ -333,18 +333,29 @@ def _wav_len(path):
 
 
 def demucs_isolate(src44: Path, out: Path):
-    """Separate the voices from everything else with Demucs (offline AI). Returns out or None."""
+    """Separate the voices from everything else with Demucs (offline AI). Returns out or None.
+    Mono - this feeds Whisper, which doesn't need stereo."""
+    return _demucs_run(src44, out, keep="vocals", mono=True, what="voices")
+
+
+def demucs_isolate_music(src44: Path, out: Path):
+    """Separate the background music/instrumental from the voices with Demucs (offline AI).
+    Returns out or None. Stereo - this is meant to be listened to."""
+    return _demucs_run(src44, out, keep="music", mono=False, what="background music")
+
+
+def _demucs_run(src44: Path, out: Path, keep: str, mono: bool, what: str):
     try:
         import numpy as np
         import torch
         from demucs.pretrained import get_model
         from demucs.apply import apply_model
     except ImportError:
-        print("  [i] Voice isolation needs:  pip install demucs   - skipping this step.")
+        print(f"  [i] Isolating {what} needs:  pip install demucs   - skipping this step.")
         return None
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     name = DEMUCS_MODEL if DEMUCS_MODEL != "auto" else ("htdemucs_ft" if dev == "cuda" else "htdemucs")
-    print(f"  Isolating voices with Demucs ({name}, {'GPU' if dev == 'cuda' else 'CPU'}) - "
+    print(f"  Isolating {what} with Demucs ({name}, {'GPU' if dev == 'cuda' else 'CPU'}) - "
           f"first use downloads the model...")
     try:
         model = get_model(name)
@@ -352,7 +363,7 @@ def demucs_isolate(src44: Path, out: Path):
         vi = model.sources.index("vocals")
         with wave.open(str(src44), "rb") as r, wave.open(str(out), "wb") as w:
             sr, ch, n = r.getframerate(), r.getnchannels(), r.getnframes()
-            w.setnchannels(1)
+            w.setnchannels(1 if mono else 2)
             w.setsampwidth(2)
             w.setframerate(sr)
             step, ctx, t0 = int(DEMUCS_CHUNK_SEC * sr), int(4 * sr), time.time()
@@ -368,16 +379,18 @@ def demucs_isolate(src44: Path, out: Path):
                 with torch.no_grad():
                     y = apply_model(model, ((x - m) / s)[None], device=dev, split=True,
                                     overlap=0.25, progress=False)[0]
-                voc = (y[vi] * s + m).mean(0).cpu().numpy()
-                keep = voc[start - a: start - a + min(step, n - start)]
-                w.writeframes((np.clip(keep, -1, 1) * 32767).astype(np.int16).tobytes())
+                chosen = y[vi] if keep == "vocals" else (y.sum(0) - y[vi])   # (channels, time)
+                piece = (chosen * s + m).cpu().numpy()
+                sl = slice(start - a, start - a + min(step, n - start))
+                piece = piece.mean(0)[sl] if mono else piece[:, sl].T.reshape(-1)
+                w.writeframes((np.clip(piece, -1, 1) * 32767).astype(np.int16).tobytes())
                 done = min(start + step, n) / n
                 el = time.time() - t0
                 print(f"\r    {done:4.0%}  (about {fmt(el / done - el)} left)", end="", flush=True)
         print()
         return out
     except Exception as e:
-        print(f"\n  [!] Voice isolation failed ({str(e)[:150]}) - continuing without it.")
+        print(f"\n  [!] Isolating {what} failed ({str(e)[:150]}) - continuing without it.")
         return None
 
 
@@ -3658,6 +3671,64 @@ def build_voice_cleanup_tab(parent_frame, online_var):
 
     run_btn.configure(command=run_cleanup)
 
+    # ---- standalone: isolate background music from a song
+    sep2 = tk.Frame(root, bg="#dadce0", height=1)
+    sep2.pack(fill="x", padx=16, pady=(18, 14))
+
+    tk.Label(root, text="Extract background music from a song", bg=WHITE, font=(FONT, 12, "bold")).pack(
+        anchor="w", padx=16)
+    tk.Label(root, text="Pick a song or video - the instrumental/background music (vocals removed) "
+                        "is saved as a stereo .wav, using Demucs (Offline). Needs: pip install demucs",
+             bg=WHITE, fg=MUTED, font=(FONT, 9), wraplength=860, justify="left").pack(
+        anchor="w", padx=16, pady=(0, 8))
+
+    mu = {"src": None, "out_dir": None}
+
+    mfrow = tk.Frame(root, bg=WHITE)
+    mfrow.pack(fill="x", padx=12, pady=(2, 0))
+    tk.Label(mfrow, text="File:", bg=WHITE, font=(FONT, 10)).pack(side="left")
+    msrc_lbl = tk.Label(mfrow, text="(none selected)", bg=WHITE, fg=MUTED, font=(FONT, 9))
+    msrc_lbl.pack(side="left", padx=6, fill="x", expand=True)
+    tk.Button(mfrow, text="Browse...", font=(FONT, 9), relief="flat", bg="#e8f0fe", padx=10,
+              command=lambda: pick_msrc()).pack(side="right")
+
+    morow = tk.Frame(root, bg=WHITE)
+    morow.pack(fill="x", padx=12, pady=(6, 0))
+    tk.Label(morow, text="Save to:", bg=WHITE, font=(FONT, 10)).pack(side="left")
+    mout_lbl = tk.Label(morow, text="(same folder as the file)", bg=WHITE, fg=MUTED, font=(FONT, 9))
+    mout_lbl.pack(side="left", padx=6, fill="x", expand=True)
+    tk.Button(morow, text="Browse...", font=(FONT, 9), relief="flat", bg="#e8f0fe", padx=10,
+              command=lambda: pick_mout()).pack(side="right")
+
+    mrun_btn = tk.Button(root, text="Extract music  ▶", font=(FONT, 10, "bold"), bg="#1a73e8",
+                         fg="white", relief="flat", padx=14, pady=6, state="disabled")
+    mrun_btn.pack(anchor="w", padx=12, pady=(10, 14))
+
+    def pick_msrc():
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(parent=ROOT, title="Select a song or video to extract music from",
+                                          filetypes=VIDEO_TYPES)
+        if path:
+            mu["src"] = Path(path)
+            msrc_lbl.configure(text=mu["src"].name, fg="#202124")
+            mrun_btn.configure(state="normal")
+
+    def pick_mout():
+        from tkinter import filedialog
+        path = filedialog.askdirectory(parent=ROOT, title="Select a folder to save the music in")
+        if path:
+            mu["out_dir"] = Path(path)
+            mout_lbl.configure(text=str(mu["out_dir"]), fg="#202124")
+
+    def run_music():
+        src = mu["src"]
+        if not src:
+            return
+        out_dir = mu["out_dir"] or src.parent
+        open_log_tab(f"Music: {src.name}", _run_music_job, src, out_dir)
+
+    mrun_btn.configure(command=run_music)
+
 
 # ---------------------------------------------------------------- offline settings tab
 def build_offline_settings_tab(parent_frame, online_var):
@@ -3761,6 +3832,30 @@ def open_history_tab():
         return
     frame = open_feature_tab("History", open_history)
     APP_STATE["history_frame"] = frame
+
+
+def _run_music_job(src_path: Path, out_dir: Path):
+    """Standalone: isolate the background music/instrumental from a song and save it."""
+    print(f"Isolating background music: {src_path}\n")
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tmpdir = Path(tempfile.mkdtemp(prefix="vidsum_music_"))
+    try:
+        src44 = tmpdir / "src.wav"
+        _ff("-i", str(src_path), "-ac", 2, "-ar", 44100, "-c:a", "pcm_s16le", src44)
+        result = demucs_isolate_music(src44, tmpdir / "music.wav")
+        if not result:
+            print("[!] Could not isolate the music - is demucs installed?  pip install demucs")
+            return
+        out_path = out_dir / f"{src_path.stem}_music.wav"
+        n = 2
+        while out_path.exists():
+            out_path = out_dir / f"{src_path.stem}_music_{n}.wav"
+            n += 1
+        shutil.copyfile(result, out_path)
+        print(f"\nSaved: {out_path}")
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def _run_cleanup_job(src_path: Path, out_dir: Path, noise_mode, online):
