@@ -1144,8 +1144,8 @@ def build_home_tab(parent_frame, online0, on_start):
     tk.Entry(extra, textvariable=to_var, width=8, font=(FONT, 9)).pack(side="left", padx=(2, 4))
     small(extra, "e.g. 10:00 to 25:00  (file / link; blank = all)").pack(side="left")
 
-    small(root, "Voice cleanup and offline models are configured under Settings (menu bar above).").pack(
-        anchor="w", padx=16, pady=(6, 0))
+    small(root, "Voice cleanup and offline models are configured under Settings (button below, "
+                "or the menu at the top of the window).").pack(anchor="w", padx=16, pady=(6, 0))
 
     hint = small(root, "")
     hint.pack(anchor="w", padx=16, pady=(8, 0))
@@ -1158,6 +1158,8 @@ def build_home_tab(parent_frame, online0, on_start):
     start_btn.pack(side="right")
     tk.Button(btns, text="History", font=(FONT, 10), relief="flat", padx=12, pady=6,
               command=lambda: open_history_tab()).pack(side="left")
+    tk.Button(btns, text="Settings", font=(FONT, 10), relief="flat", padx=12, pady=6,
+              command=lambda: open_settings_tab()).pack(side="left", padx=(6, 0))
 
     START_TEXT = {"file": "Select video & start  ▶", "folder": "Select folder & start  ▶",
                   "url": "Download & start  ▶", "mic": "Start microphone  ▶",
