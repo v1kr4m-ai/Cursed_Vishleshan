@@ -72,6 +72,10 @@ function callApi(name, ...args) {
   if (name === "read_history_file") return Promise.resolve("(mock file contents)");
   if (name === "pick_file") return Promise.resolve("C:/fake/song.mp3");
   if (name === "pick_folder") return Promise.resolve("C:/fake/out");
+  if (name === "start_job") return Promise.resolve({
+    ok: true, jobId: "mock-job-" + Math.random().toString(36).slice(2),
+    title: "Mock " + args[0].mode + " job", stoppable: args[0].mode === "watch",
+  });
   if (name.startsWith("start_")) return Promise.resolve("mock-job-" + Math.random().toString(36).slice(2));
   return Promise.resolve({ ok: true, mock: true });
 }
@@ -183,6 +187,7 @@ function renderSources() {
     renderSources();
     persistHome();
   }));
+  document.getElementById("urlRow").style.display = state.mode === "url" ? "flex" : "none";
   document.getElementById("skipDone").checked = state.skipDone;
   document.getElementById("subfolders").checked = state.subfolders;
 }
@@ -213,7 +218,7 @@ function renderStats() {
 }
 
 function persistHome() {
-  callApi("save_home", {
+  return callApi("save_home", {
     model: state.selectedModel,
     spokenLanguage: state.spokenLanguage,
     outputs: state.outputs,
@@ -252,13 +257,20 @@ window.onJobDone = function (jobId) {
   j.statusEl.classList.add("done");
 };
 
-function addJobPanel(containerEl, jobId, title) {
+function addJobPanel(containerEl, jobId, title, stoppable) {
   const wrap = document.createElement("div");
   wrap.className = "joblog";
-  wrap.innerHTML = `<div class="joblog-head"><span>${title}</span><span class="joblog-status">Running...</span></div>
+  wrap.innerHTML = `<div class="joblog-head"><span>${title}</span>
+      <span class="joblog-actions">
+        ${stoppable ? '<button class="ghostbtn tiny" data-a="stop">Stop</button>' : ""}
+        <span class="joblog-status">Running...</span>
+      </span></div>
     <pre class="joblog-body"></pre>`;
   containerEl.prepend(wrap);
   jobLogs[jobId] = { statusEl: wrap.querySelector(".joblog-status"), bodyEl: wrap.querySelector(".joblog-body") };
+  if (stoppable) {
+    wrap.querySelector('[data-a="stop"]').addEventListener("click", () => callApi("stop_watch_job", jobId));
+  }
 }
 
 // ---------------------------------------------------------------- Voice Cleanup tab
@@ -420,8 +432,22 @@ document.getElementById("historyRemoveBtn")?.addEventListener("click", async () 
 
 function wireStart() {
   document.getElementById("startBtn").addEventListener("click", async () => {
-    const res = await callApi("start_job", { mode: state.mode });
-    if (res && res.message) toast(res.message);
+    await persistHome();
+    const startBtn = document.getElementById("startBtn");
+    const payload = { mode: state.mode };
+    if (state.mode === "url") payload.url = document.getElementById("urlInput").value.trim();
+    startBtn.disabled = true;
+    let res;
+    try {
+      res = await callApi("start_job", payload);
+    } finally {
+      startBtn.disabled = false;
+    }
+    if (!res || !res.ok) {
+      toast((res && res.message) || "Could not start.");
+      return;
+    }
+    addJobPanel(document.getElementById("jobPanels"), res.jobId, res.title, res.stoppable);
   });
 }
 

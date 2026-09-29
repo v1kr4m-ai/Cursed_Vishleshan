@@ -64,6 +64,9 @@
         <div class="card full">
           <h2>What to process</h2>
           <div class="sourcegrid" id="sourceGrid"></div>
+          <div class="pickrow" id="urlRow" style="display:none;">
+            <input type="text" id="urlInput" class="select" placeholder="https://...">
+          </div>
           <div class="rowflex">
             <label class="checkrow"><input type="checkbox" id="skipDone"> Folders: skip already done</label>
             <label class="checkrow"><input type="checkbox" id="subfolders"> Include subfolders</label>
@@ -89,6 +92,7 @@
     </section>
 
     <button id="startBtn" class="startbtn">Start&ensp;&#9654;</button>
+    <div class="joblogs" id="jobPanels"></div>
   </main>
 
   <main id="view-cleanup" class="view">

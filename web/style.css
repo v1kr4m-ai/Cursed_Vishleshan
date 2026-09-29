@@ -218,6 +218,8 @@ html, body {
   display: flex; justify-content: space-between; align-items: center;
   padding: 8px 14px; font-size: 12.5px; font-weight: 600;
 }
+.joblog-actions { display: flex; align-items: center; gap: 10px; }
+.ghostbtn.tiny { padding: 5px 12px; font-size: 11.5px; }
 .joblog-status { color: var(--muted); font-weight: 500; }
 .joblog-status.done { color: #1e8e3e; }
 .joblog-body {

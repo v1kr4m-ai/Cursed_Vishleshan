@@ -39,6 +39,9 @@ class _JobPusher:
         pass
 
 
+WATCH_EVENTS = {}   # job_id -> threading.Event, for the Watch mode Stop button
+
+
 def _run_job(api, target_fn, *args, **kwargs):
     """Run target_fn in a background thread (one job at a time, like the Tk app's
     PROCESSING_LOCK), streaming its print() output to the given job's log panel."""
@@ -135,9 +138,66 @@ class Api:
         return result[0] if result else None
 
     def start_job(self, payload):
-        # Stage 3 wires real jobs (file/folder/url/watch/mic/system/call) here.
-        return {"ok": False, "message": "Job dispatch lands in the next update - "
-                                        "this stage is the Home tab shell only."}
+        s = vs.load_settings()
+        mode = payload.get("mode", s.get("mode", "file"))
+        online = self._online()
+        vs.VOCAB = vs.load_vocab()
+
+        if mode in ("mic", "system", "call"):
+            return {"ok": False, "message": "Live capture lands in a future update."}
+
+        if mode == "watch":
+            folder = self.pick_folder()
+            if not folder:
+                return {"ok": False, "message": "No folder selected."}
+            model = vs.load_whisper(s["model"])
+            stop_event = threading.Event()
+            job_id = _run_job(self, vs.run_watch, Path(folder), s, model, online, stop_event=stop_event)
+            WATCH_EVENTS[job_id] = stop_event
+            return {"ok": True, "jobId": job_id, "title": f"Watch: {Path(folder).name}", "stoppable": True}
+
+        if mode == "file":
+            video = self.pick_file()
+            if not video:
+                return {"ok": False, "message": "No file selected."}
+            model = vs.load_whisper(s["model"])
+            job_id = _run_job(self, vs.process_video, Path(video), s, model, online,
+                              kind="file", source=None, open_result=True)
+            return {"ok": True, "jobId": job_id, "title": f"File: {Path(video).name}"}
+
+        if mode == "folder":
+            folder = self.pick_folder()
+            if not folder:
+                return {"ok": False, "message": "No folder selected."}
+            report_dir = Path(folder)
+            vids = vs.list_videos(report_dir, s.get("subfolders", False))
+            skipped = [v for v in vids if s.get("skip_done", True) and vs.already_done(v)]
+            todo = [v for v in vids if v not in skipped]
+            if not todo:
+                return {"ok": False, "message": f"{len(vids)} file(s) found - all {len(skipped)} already done."}
+            items = [{"path": v, "kind": "file"} for v in todo]
+            model = vs.load_whisper(s["model"])
+            job_id = _run_job(self, vs.run_batch, items, s, model, online, report_dir)
+            return {"ok": True, "jobId": job_id, "title": f"Folder: {report_dir.name}"}
+
+        if mode == "url":
+            url = (payload.get("url") or "").strip()
+            if not url.startswith(("http://", "https://")):
+                return {"ok": False, "message": "Paste a link starting with http:// or https://"}
+            if not online:
+                return {"ok": False, "message": "Downloading a link needs internet."}
+            cfg = dict(s, url=url)
+            model = vs.load_whisper(s["model"])
+            job_id = _run_job(self, vs._run_url_job, cfg, model, online)
+            return {"ok": True, "jobId": job_id, "title": "URL: " + url[:40]}
+
+        return {"ok": False, "message": f"Unknown mode: {mode}"}
+
+    def stop_watch_job(self, job_id):
+        ev = WATCH_EVENTS.get(job_id)
+        if ev:
+            ev.set()
+        return True
 
     def _online(self):
         s = vs.load_settings()
