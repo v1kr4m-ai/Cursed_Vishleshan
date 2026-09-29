@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cursed_Vishleshan</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+  <header class="topbar">
+    <div class="brand">Cursed_Vishleshan</div>
+    <nav class="pillnav" id="pillnav">
+      <button class="pill active" data-tab="home">Home</button>
+      <button class="pill" data-tab="cleanup">Voice Cleanup</button>
+      <button class="pill" data-tab="offline">Offline Settings</button>
+      <button class="pill" data-tab="history">History</button>
+    </nav>
+    <div class="icons">
+      <span class="netdot" id="netDot"></span>
+      <label class="onlineswitch">
+        <input type="checkbox" id="onlineToggle">
+        <span class="track"><span class="thumb"></span></span>
+      </label>
+      <span class="onlinelabel" id="onlineLabel">Online</span>
+    </div>
+  </header>
+
+  <main id="view-home" class="view active">
+    <h1 class="welcome">Welcome back</h1>
+
+    <section class="statrow">
+      <div class="statcard">
+        <div class="statnum" id="statModels">-</div>
+        <div class="statlabel">Models downloaded</div>
+      </div>
+      <div class="statcard">
+        <div class="statnum" id="statGpu">-</div>
+        <div class="statlabel">Transcription device</div>
+      </div>
+      <div class="statcard">
+        <div class="statnum" id="statHistory">-</div>
+        <div class="statlabel">Items processed</div>
+      </div>
+      <div class="statcard accent">
+        <div class="statnum" id="statOnline">-</div>
+        <div class="statlabel">Tool preference</div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="card wide">
+        <h2>1&ensp;Speech-to-text model</h2>
+        <div class="modelgrid" id="modelGrid"></div>
+      </div>
+
+      <div class="card">
+        <h2>2&ensp;Spoken language</h2>
+        <select id="spokenSelect" class="select"></select>
+        <p class="muted small">Auto-detect handles mixed languages.</p>
+      </div>
+
+      <div class="card">
+        <h2>3&ensp;Output languages</h2>
+        <div id="outputChecks" class="checklist"></div>
+        <label class="checkrow"><input type="checkbox" id="speakSave"> Also save as spoken audio</label>
+      </div>
+
+      <div class="card wide">
+        <h2>4&ensp;What to process</h2>
+        <div class="sourcegrid" id="sourceGrid"></div>
+        <div class="rowflex">
+          <label class="checkrow"><input type="checkbox" id="skipDone"> Folders: skip already done</label>
+          <label class="checkrow"><input type="checkbox" id="subfolders"> Include subfolders</label>
+        </div>
+      </div>
+
+      <div class="card dark">
+        <h2>Voice cleanup</h2>
+        <p class="bignum" id="noiseSummary">Off</p>
+        <p class="muted small">Change this under the Voice Cleanup tab - it applies everywhere.</p>
+      </div>
+    </section>
+
+    <button id="startBtn" class="startbtn">Start&ensp;&#9654;</button>
+  </main>
+
+  <main id="view-cleanup" class="view">
+    <div class="card"><h2>Voice Cleanup</h2><p class="muted">Coming in the next update.</p></div>
+  </main>
+  <main id="view-offline" class="view">
+    <div class="card"><h2>Offline Settings</h2><p class="muted">Coming in the next update.</p></div>
+  </main>
+  <main id="view-history" class="view">
+    <div class="card"><h2>History</h2><p class="muted">Coming in the next update.</p></div>
+  </main>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

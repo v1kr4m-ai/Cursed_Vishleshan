@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 *.bak
 video_summarizer_settings.json
+.claude/
+6cac4382d3982e8c360c502e98997b1d.jpg
+image-1790700989375.webp
+_test_scratch/

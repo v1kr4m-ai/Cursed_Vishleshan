@@ -14,6 +14,9 @@ PyAudioWPatch==0.2.12.8
 yt-dlp==2026.2.21
 edge-tts==7.2.8
 
+# ---- UI (app.py) ----
+pywebview==6.2.1
+
 # ---- Optional: GPU acceleration for Whisper transcription (NVIDIA) ----
 nvidia-cublas-cu12==12.9.2.10
 nvidia-cudnn-cu12==9.26.0.51

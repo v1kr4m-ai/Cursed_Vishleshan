@@ -37,6 +37,14 @@ Optional extras:
 
 ## Usage
 
+**New UI (in progress):** `python app.py` — a `pywebview`-based rewrite of the interface
+(`web/`), aiming for a cleaner, production-styled look. All processing logic still lives
+in `video_summarizer.py`; `app.py` is a thin bridge to it. Currently only the Home tab
+(model picker, language/source, settings) is wired up - Start and the other tabs land in
+upcoming updates.
+
+**Current UI:**
+
 ```bash
 python video_summarizer.py
 ```
