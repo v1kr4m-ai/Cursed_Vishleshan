@@ -57,36 +57,34 @@ function toast(msg) {
   toast._h = setTimeout(() => t.classList.remove("show"), 2600);
 }
 
-function ringSvg(pct, extraClass) {
-  const r = 16, c = 2 * Math.PI * r;
-  const off = c * (1 - pct / 100);
-  return `<svg class="modelring ${extraClass || ""}" viewBox="0 0 40 40">
-    <circle class="bg" cx="20" cy="20" r="${r}" fill="none" stroke-width="4"/>
-    <circle class="fg" cx="20" cy="20" r="${r}" fill="none" stroke-width="4"
-      stroke-dasharray="${c}" stroke-dashoffset="${off}" stroke-linecap="round"
-      transform="rotate(-90 20 20)"/>
-  </svg>`;
-}
-
 function renderModels() {
-  const grid = document.getElementById("modelGrid");
-  grid.innerHTML = "";
+  const list = document.getElementById("modelGrid");
+  list.innerHTML = "";
   for (const m of state.models) {
-    const div = document.createElement("div");
     const selected = m.name === state.selectedModel;
-    div.className = "modelcard" + (selected ? " selected" : "") + (m.downloaded ? " downloaded" : "");
-    div.dataset.name = m.name;
-    const pct = m.downloaded ? 100 : (m._progress || 0);
-    div.innerHTML = `
-      ${ringSvg(pct)}
-      <div class="modelname">${m.name}</div>
-      <div class="modelsize">${m.size}</div>
-      <div class="modelstatus">${m.downloaded ? (selected ? "Selected" : "Downloaded")
-        : (m._downloading ? pct + "%" : "Click to download")}</div>`;
-    div.title = m.desc;
-    div.addEventListener("click", () => onModelClick(m));
-    grid.appendChild(div);
+    const pct = m._progress || 0;
+    const row = document.createElement("div");
+    row.className = "modelrow" + (selected ? " selected-row" : "");
+    row.title = m.desc;
+    let status;
+    if (m._downloading) status = `<span class="statuscircle downloading">${pct}%</span>`;
+    else if (selected) status = `<span class="statuscircle selected">&#10003;</span>`;
+    else if (m.downloaded) status = `<span class="statuscircle downloaded">&#10003;</span>`;
+    else status = `<span class="statuscircle"></span>`;
+    row.innerHTML = `
+      <div class="modelrow-left">
+        <span class="modelicon">${m.name.slice(0, 2)}</span>
+        <div class="modelrow-text">
+          <div class="modelrow-name">${m.name}</div>
+          <div class="modelrow-size">${m.size}</div>
+        </div>
+      </div>
+      ${status}`;
+    row.addEventListener("click", () => onModelClick(m));
+    list.appendChild(row);
   }
+  document.getElementById("modelsCount").textContent =
+    state.models.filter((m) => m.downloaded).length + "/" + state.models.length;
 }
 
 function onModelClick(m) {

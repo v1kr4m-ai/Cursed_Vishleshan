@@ -47,37 +47,44 @@
       </div>
     </section>
 
-    <section class="grid">
-      <div class="card wide">
-        <h2>1&ensp;Speech-to-text model</h2>
-        <div class="modelgrid" id="modelGrid"></div>
-      </div>
+    <section class="dashgrid">
+      <div class="maincol">
+        <div class="card">
+          <h2>Spoken language</h2>
+          <select id="spokenSelect" class="select"></select>
+          <p class="muted small">Auto-detect handles mixed languages.</p>
+        </div>
 
-      <div class="card">
-        <h2>2&ensp;Spoken language</h2>
-        <select id="spokenSelect" class="select"></select>
-        <p class="muted small">Auto-detect handles mixed languages.</p>
-      </div>
+        <div class="card">
+          <h2>Output languages</h2>
+          <div id="outputChecks" class="checklist"></div>
+          <label class="checkrow"><input type="checkbox" id="speakSave"> Also save as spoken audio</label>
+        </div>
 
-      <div class="card">
-        <h2>3&ensp;Output languages</h2>
-        <div id="outputChecks" class="checklist"></div>
-        <label class="checkrow"><input type="checkbox" id="speakSave"> Also save as spoken audio</label>
-      </div>
+        <div class="card full">
+          <h2>What to process</h2>
+          <div class="sourcegrid" id="sourceGrid"></div>
+          <div class="rowflex">
+            <label class="checkrow"><input type="checkbox" id="skipDone"> Folders: skip already done</label>
+            <label class="checkrow"><input type="checkbox" id="subfolders"> Include subfolders</label>
+          </div>
+        </div>
 
-      <div class="card wide">
-        <h2>4&ensp;What to process</h2>
-        <div class="sourcegrid" id="sourceGrid"></div>
-        <div class="rowflex">
-          <label class="checkrow"><input type="checkbox" id="skipDone"> Folders: skip already done</label>
-          <label class="checkrow"><input type="checkbox" id="subfolders"> Include subfolders</label>
+        <div class="card dark full">
+          <h2>Voice cleanup</h2>
+          <p class="bignum" id="noiseSummary">Off</p>
+          <p class="muted small">Change this under the Voice Cleanup tab - it applies everywhere.</p>
         </div>
       </div>
 
-      <div class="card dark">
-        <h2>Voice cleanup</h2>
-        <p class="bignum" id="noiseSummary">Off</p>
-        <p class="muted small">Change this under the Voice Cleanup tab - it applies everywhere.</p>
+      <div class="sidecol">
+        <div class="card dark modelscard">
+          <div class="modelscard-head">
+            <h2>Speech-to-text model</h2>
+            <span class="modelscount" id="modelsCount"></span>
+          </div>
+          <div class="modellist" id="modelGrid"></div>
+        </div>
       </div>
     </section>
 

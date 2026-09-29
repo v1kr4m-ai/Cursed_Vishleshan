@@ -105,20 +105,27 @@ html, body {
 .statcard.accent .statlabel { color: var(--accent-ink); opacity: .8; }
 .statcard.accent .statnum { color: var(--accent-ink); }
 
-/* ---- card grid ---- */
-.grid {
+/* ---- dashboard layout: main column + side column (model list) ---- */
+.dashgrid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  grid-auto-rows: min-content;
+  grid-template-columns: 2fr 1fr;
   gap: 16px;
   margin-bottom: 24px;
 }
+.maincol {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-auto-rows: min-content;
+  gap: 16px;
+  align-content: start;
+}
+.maincol .card.full { grid-column: 1 / -1; }
+.sidecol { display: flex; }
+
 .card {
   background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
   padding: 20px 22px;
-  grid-column: span 2;
 }
-.card.wide { grid-column: span 4; }
 .card.dark { background: var(--dark); color: #fff; }
 .card h2 { font-size: 14px; font-weight: 600; margin: 0 0 14px; letter-spacing: -0.01em; }
 .card.dark h2 { color: #fff; }
@@ -128,22 +135,36 @@ html, body {
 .small { font-size: 12px; margin: 8px 0 0; }
 .bignum { font-size: 22px; font-weight: 700; margin: 0; }
 
-/* ---- model grid ---- */
-.modelgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-.modelcard {
-  border-radius: var(--radius-sm); background: #f6f7f9; padding: 12px;
-  cursor: pointer; border: 2px solid transparent; transition: border-color .15s, background .15s;
-  display: flex; flex-direction: column; gap: 8px; align-items: center; text-align: center;
+/* ---- model list (checklist-style card, right column) ---- */
+.modelscard { flex: 1; display: flex; flex-direction: column; }
+.modelscard-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.modelscard-head h2 { margin: 0; }
+.modelscount { font-size: 20px; font-weight: 700; color: #fff; }
+
+.modellist { display: flex; flex-direction: column; gap: 2px; flex: 1; overflow-y: auto; }
+.modelrow {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 8px; border-radius: 14px; cursor: pointer; transition: background .15s;
 }
-.modelcard:hover { background: #eff0f3; }
-.modelcard.selected { border-color: var(--accent); background: #fff9ec; }
-.modelname { font-size: 13px; font-weight: 600; }
-.modelsize { font-size: 11px; color: var(--muted); }
-.modelring { width: 40px; height: 40px; }
-.modelring circle.bg { stroke: #e3e5ea; }
-.modelring circle.fg { stroke: var(--accent); transition: stroke-dashoffset .2s linear; }
-.modelcard.downloaded .modelring circle.fg { stroke: #1e8e3e; }
-.modelstatus { font-size: 10.5px; color: var(--muted); }
+.modelrow:hover { background: rgba(255, 255, 255, .06); }
+.modelrow.selected-row { background: rgba(245, 195, 68, .14); }
+.modelrow-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.modelicon {
+  width: 36px; height: 36px; border-radius: 50%; background: #2b2e36; color: #c7cad1;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  font-size: 13px; font-weight: 700; text-transform: uppercase;
+}
+.modelrow-text { min-width: 0; }
+.modelrow-name { font-size: 13.5px; font-weight: 600; color: #fff; white-space: nowrap; }
+.modelrow-size { font-size: 11.5px; color: #8a8f98; margin-top: 1px; }
+.statuscircle {
+  width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: #2b2e36; color: #6a6f78; font-size: 11px; font-weight: 700;
+}
+.statuscircle.selected { background: var(--accent); color: var(--accent-ink); }
+.statuscircle.downloaded { background: #3a3d45; color: #c7cad1; }
+.statuscircle.downloading { background: #2b2e36; color: var(--accent); font-size: 9.5px; }
 
 /* ---- misc form bits ---- */
 .select {
@@ -187,7 +208,9 @@ html, body {
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
 @media (max-width: 980px) {
-  .grid, .statrow { grid-template-columns: repeat(2, 1fr); }
-  .card, .card.wide { grid-column: span 2; }
-  .modelgrid, .sourcegrid { grid-template-columns: repeat(2, 1fr); }
+  .statrow { grid-template-columns: repeat(2, 1fr); }
+  .dashgrid { grid-template-columns: 1fr; }
+  .maincol { grid-template-columns: 1fr; }
+  .maincol .card.full { grid-column: auto; }
+  .sourcegrid { grid-template-columns: repeat(2, 1fr); }
 }
