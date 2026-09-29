@@ -292,15 +292,18 @@ def vocab_note():
 # off / light / strong  = quick ffmpeg filters
 # studio                = offline AI: Demucs (isolate voices) -> DeepFilterNet (remove noise) -> level
 # online                = ElevenLabs Voice Isolator (needs API key; audio is uploaded) -> level
-NOISE_CHOICES = [("Off", "off"), ("Light filter", "light"), ("Strong filter", "strong"),
-                 ("Studio AI (offline)", "studio"), ("Online AI (ElevenLabs)", "online")]
+NOISE_CHOICES = [("Off", "off"), ("Light filter (Offline)", "light"),
+                 ("Strong filter (Offline)", "strong"),
+                 ("Studio AI - Demucs + DeepFilterNet (Offline)", "studio"),
+                 ("ElevenLabs Voice Isolator (Online)", "online")]
 NOISE_HELP = {
     "off": "No cleanup.",
-    "light": "Light filter: quick, gentle hiss/hum reduction.",
-    "strong": "Strong filter: quick, heavy noise reduction (can dull quiet voices).",
-    "studio": "Studio AI: isolates the voices from music/crowd/background, then AI noise removal. "
-              "Offline. Slow on CPU (about real time), much faster with an NVIDIA GPU.",
-    "online": "Online AI: ElevenLabs Voice Isolator - excellent on very noisy audio. Needs an API key, "
+    "light": "Light filter (Offline): ffmpeg only, quick, gentle hiss/hum reduction.",
+    "strong": "Strong filter (Offline): ffmpeg only, quick, heavy noise reduction (can dull quiet voices).",
+    "studio": "Studio AI (Offline): Demucs isolates the voices from music/crowd/background, then "
+              "DeepFilterNet removes noise. Slow on CPU (about real time), much faster with an NVIDIA GPU. "
+              "Falls back to the Strong filter for whichever step's model isn't installed.",
+    "online": "ElevenLabs Voice Isolator (Online): excellent on very noisy audio. Needs an API key, "
               "uses credits, and the audio is uploaded to ElevenLabs.",
 }
 NOISE_FILTERS = {
