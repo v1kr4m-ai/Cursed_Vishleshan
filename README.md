@@ -41,4 +41,12 @@ Optional extras:
 python video_summarizer.py
 ```
 
-or double-click `Summarize_Video.bat`. Pick a Whisper model, spoken language and source on the **Home** tab, then **Start** — the feature opens in its own tab. Voice cleanup mode, and which Ollama/LM Studio model gets used, are configured once in the **Voice Cleanup** and **Offline Settings** tabs and apply everywhere.
+or double-click `Cursed_Vishleshan.bat`. Pick a Whisper model, spoken language and source on the **Home** tab, then **Start** — the feature opens in its own tab. Voice cleanup mode, background-music isolation, and which Ollama/LM Studio model gets used are all under **Settings** (menu bar, or the button on Home) and apply everywhere.
+
+## Install
+
+```bash
+pip install -r requirements.txt
+```
+
+See `requirements.txt` for what's core vs. optional (GPU acceleration, Demucs voice/music isolation, live noise reduction) — it mirrors the table above with versions pinned to what's tested.

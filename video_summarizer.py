@@ -513,8 +513,71 @@ def elevenlabs_isolate(src: Path, tmp: Path, key):
     return out
 
 
+def _dpapi_protect(data: bytes) -> bytes:
+    """Encrypt bytes so only this Windows user account can decrypt them again (DPAPI)."""
+    import ctypes
+    from ctypes import wintypes
+
+    class DATA_BLOB(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    buf = ctypes.create_string_buffer(data, len(data))
+    in_blob = DATA_BLOB(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char)))
+    out_blob = DATA_BLOB()
+    if not ctypes.windll.crypt32.CryptProtectData(
+            ctypes.byref(in_blob), None, None, None, None, 0, ctypes.byref(out_blob)):
+        raise ctypes.WinError()
+    try:
+        return ctypes.string_at(out_blob.pbData, out_blob.cbData)
+    finally:
+        ctypes.windll.kernel32.LocalFree(out_blob.pbData)
+
+
+def _dpapi_unprotect(data: bytes) -> bytes:
+    import ctypes
+    from ctypes import wintypes
+
+    class DATA_BLOB(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    buf = ctypes.create_string_buffer(data, len(data))
+    in_blob = DATA_BLOB(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char)))
+    out_blob = DATA_BLOB()
+    if not ctypes.windll.crypt32.CryptUnprotectData(
+            ctypes.byref(in_blob), None, None, None, None, 0, ctypes.byref(out_blob)):
+        raise ctypes.WinError()
+    try:
+        return ctypes.string_at(out_blob.pbData, out_blob.cbData)
+    finally:
+        ctypes.windll.kernel32.LocalFree(out_blob.pbData)
+
+
+def save_elevenlabs_key(key: str):
+    """Store the key DPAPI-encrypted (tied to this Windows account), not plaintext."""
+    s = load_settings()
+    try:
+        s["elevenlabs_key_enc"] = base64.b64encode(_dpapi_protect(key.encode("utf-8"))).decode("ascii")
+        s.pop("elevenlabs_key", None)
+    except Exception:
+        s["elevenlabs_key"] = key   # DPAPI unavailable - fall back to plaintext rather than lose it
+    save_settings(s)
+
+
 def elevenlabs_key():
-    return os.environ.get("ELEVENLABS_API_KEY") or load_settings().get("elevenlabs_key", "")
+    env = os.environ.get("ELEVENLABS_API_KEY")
+    if env:
+        return env
+    s = load_settings()
+    enc = s.get("elevenlabs_key_enc")
+    if enc:
+        try:
+            return _dpapi_unprotect(base64.b64decode(enc)).decode("utf-8")
+        except Exception:
+            return ""
+    legacy = s.get("elevenlabs_key", "")
+    if legacy:
+        save_elevenlabs_key(legacy)   # one-time migration off plaintext
+    return legacy
 
 
 def prepare_audio(video, clip, noise, tmpdir, online=False):
@@ -3586,9 +3649,7 @@ def build_voice_cleanup_tab(parent_frame, online_var):
             "Paste your ElevenLabs API key\n(elevenlabs.io > Developers > API keys).\n"
             "It is saved only on this PC, in the settings file.", show="*", parent=ROOT)
         if k and k.strip():
-            s = load_settings()
-            s["elevenlabs_key"] = k.strip()
-            save_settings(s)
+            save_elevenlabs_key(k.strip())
         key_text()
 
     def on_noise(*_):

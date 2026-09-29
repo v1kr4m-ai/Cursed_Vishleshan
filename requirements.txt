@@ -1,0 +1,32 @@
+# Cursed_Vishleshan - pinned to what's tested on this machine (Windows, Python 3.14).
+# `pip install -r requirements.txt` reproduces the full setup, GPU acceleration included.
+#
+# Different hardware? The nvidia-cublas/cudnn and torch/torchvision lines below are pinned
+# for an NVIDIA GPU with CUDA 13 support (RTX 40/50-series or newer). On an older GPU, no
+# GPU at all, or a different OS, drop those lines (or swap the --extra-index-url for
+# https://download.pytorch.org/whl/cu126, or plain PyPI for a CPU-only torch) - everything
+# still runs on CPU, just slower. See README.md's "Optional extras" table.
+
+# ---- Core: transcription, translation, downloads, text-to-speech ----
+faster-whisper==1.2.1
+sounddevice==0.5.5
+PyAudioWPatch==0.2.12.8
+yt-dlp==2026.2.21
+edge-tts==7.2.8
+
+# ---- Optional: GPU acceleration for Whisper transcription (NVIDIA) ----
+nvidia-cublas-cu12==12.9.2.10
+nvidia-cudnn-cu12==9.26.0.51
+
+# ---- Optional: Voice cleanup "Studio AI" + background-music isolation (Demucs) ----
+--extra-index-url https://download.pytorch.org/whl/cu130
+torch==2.12.1+cu130
+torchvision==0.27.1+cu130
+demucs==4.1.0
+
+# ---- Optional: live-microphone noise reduction while recording ----
+noisereduce
+
+# Not pip-installable: DeepFilterNet's Python package (deepfilternet) needs a Rust/Cargo
+# toolchain to build from source. The app doesn't need it - it downloads a standalone
+# deep-filter.exe from GitHub automatically the first time Studio AI mode runs.
