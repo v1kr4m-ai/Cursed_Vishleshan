@@ -10,7 +10,6 @@ picker, settings persistence). Job dispatch (Start) is a stub until Stage 3.
 """
 import contextlib
 import datetime
-import json
 import threading
 import uuid
 from pathlib import Path
@@ -21,41 +20,46 @@ import video_summarizer as vs
 
 WEB_DIR = Path(__file__).with_name("web")
 
+# Background threads write here; the page POLLS these via js_api getters instead of
+# Python pushing into the page (window.evaluate_js() called from a non-GUI thread can
+# deadlock pywebview's EdgeChromium backend - this avoids that class of hang entirely).
+JOBS = {}             # job_id -> {"lines": [str, ...], "done": bool}
+MODEL_PROGRESS = {}   # model_name -> {"pct": int|None, "err": str|None, "done": bool}
+WATCH_EVENTS = {}     # job_id -> threading.Event, for the Watch mode Stop button
+
 
 def _noise_label(value: str) -> str:
     return dict((v, l) for l, v in vs.NOISE_CHOICES).get(value, "Off")
 
 
-class _JobPusher:
-    """File-like object that streams print() output to the JS side as it happens."""
-    def __init__(self, api, job_id):
-        self.api, self.job_id = api, job_id
+class _JobBuffer:
+    """File-like object that buffers print() output for a job; polled, never pushed."""
+    def __init__(self, job_id):
+        self.job_id = job_id
 
     def write(self, s):
         if s:
-            self.api._push("onJobLog", self.job_id, s)
+            JOBS[self.job_id]["lines"].append(s)
 
     def flush(self):
         pass
 
 
-WATCH_EVENTS = {}   # job_id -> threading.Event, for the Watch mode Stop button
-
-
-def _run_job(api, target_fn, *args, **kwargs):
+def _run_job(target_fn, *args, **kwargs):
     """Run target_fn in a background thread (one job at a time, like the Tk app's
-    PROCESSING_LOCK), streaming its print() output to the given job's log panel."""
+    PROCESSING_LOCK), buffering its print() output for get_job_log() to poll."""
     job_id = str(uuid.uuid4())
+    JOBS[job_id] = {"lines": [], "done": False}
 
     def worker():
         with vs.PROCESSING_LOCK:
             try:
-                with contextlib.redirect_stdout(_JobPusher(api, job_id)):
+                with contextlib.redirect_stdout(_JobBuffer(job_id)):
                     target_fn(*args, **kwargs)
             except Exception as e:
-                api._push("onJobLog", job_id, f"\n[!] {e}\n")
+                JOBS[job_id]["lines"].append(f"\n[!] {e}\n")
             finally:
-                api._push("onJobDone", job_id)
+                JOBS[job_id]["done"] = True
     threading.Thread(target=worker, daemon=True).start()
     return job_id
 
@@ -114,16 +118,21 @@ class Api:
         return True
 
     def download_model(self, name):
+        MODEL_PROGRESS[name] = {"pct": 0, "err": None, "done": False}
+
         def worker():
             def progress(pct):
-                self._push("onModelProgress", name, pct, None)
+                MODEL_PROGRESS[name] = {"pct": pct, "err": None, "done": False}
             try:
                 vs.download_whisper(name, progress)
-                self._push("onModelProgress", name, 100, None)
+                MODEL_PROGRESS[name] = {"pct": 100, "err": None, "done": True}
             except Exception as e:
-                self._push("onModelProgress", name, None, str(e)[:300])
+                MODEL_PROGRESS[name] = {"pct": None, "err": str(e)[:300], "done": True}
         threading.Thread(target=worker, daemon=True).start()
         return True
+
+    def get_model_progress(self, name):
+        return MODEL_PROGRESS.get(name, {"pct": None, "err": None, "done": False})
 
     def pick_file(self):
         types = ("Video/Audio files (" + ";".join(
@@ -152,7 +161,7 @@ class Api:
                 return {"ok": False, "message": "No folder selected."}
             model = vs.load_whisper(s["model"])
             stop_event = threading.Event()
-            job_id = _run_job(self, vs.run_watch, Path(folder), s, model, online, stop_event=stop_event)
+            job_id = _run_job(vs.run_watch, Path(folder), s, model, online, stop_event=stop_event)
             WATCH_EVENTS[job_id] = stop_event
             return {"ok": True, "jobId": job_id, "title": f"Watch: {Path(folder).name}", "stoppable": True}
 
@@ -161,7 +170,7 @@ class Api:
             if not video:
                 return {"ok": False, "message": "No file selected."}
             model = vs.load_whisper(s["model"])
-            job_id = _run_job(self, vs.process_video, Path(video), s, model, online,
+            job_id = _run_job(vs.process_video, Path(video), s, model, online,
                               kind="file", source=None, open_result=True)
             return {"ok": True, "jobId": job_id, "title": f"File: {Path(video).name}"}
 
@@ -177,7 +186,7 @@ class Api:
                 return {"ok": False, "message": f"{len(vids)} file(s) found - all {len(skipped)} already done."}
             items = [{"path": v, "kind": "file"} for v in todo]
             model = vs.load_whisper(s["model"])
-            job_id = _run_job(self, vs.run_batch, items, s, model, online, report_dir)
+            job_id = _run_job(vs.run_batch, items, s, model, online, report_dir)
             return {"ok": True, "jobId": job_id, "title": f"Folder: {report_dir.name}"}
 
         if mode == "url":
@@ -188,7 +197,7 @@ class Api:
                 return {"ok": False, "message": "Downloading a link needs internet."}
             cfg = dict(s, url=url)
             model = vs.load_whisper(s["model"])
-            job_id = _run_job(self, vs._run_url_job, cfg, model, online)
+            job_id = _run_job(vs._run_url_job, cfg, model, online)
             return {"ok": True, "jobId": job_id, "title": "URL: " + url[:40]}
 
         return {"ok": False, "message": f"Unknown mode: {mode}"}
@@ -198,6 +207,13 @@ class Api:
         if ev:
             ev.set()
         return True
+
+    def get_job_log(self, job_id, offset=0):
+        j = JOBS.get(job_id)
+        if not j:
+            return {"lines": [], "done": True}
+        lines = j["lines"][offset:]
+        return {"lines": lines, "done": j["done"], "nextOffset": offset + len(lines)}
 
     def _online(self):
         s = vs.load_settings()
@@ -229,11 +245,11 @@ class Api:
 
     def start_cleanup_job(self, src_path, out_dir, noise_mode):
         out_dir = Path(out_dir) if out_dir else Path(src_path).parent
-        return _run_job(self, vs._run_cleanup_job, Path(src_path), out_dir, noise_mode, self._online())
+        return _run_job(vs._run_cleanup_job, Path(src_path), out_dir, noise_mode, self._online())
 
     def start_music_job(self, src_path, out_dir):
         out_dir = Path(out_dir) if out_dir else Path(src_path).parent
-        return _run_job(self, vs._run_music_job, Path(src_path), out_dir)
+        return _run_job(vs._run_music_job, Path(src_path), out_dir)
 
     # ---------------------------------------------------------------- Offline Settings tab
     def get_offline_settings(self):
@@ -315,16 +331,6 @@ class Api:
         items = [x for x in items if not (x.get("time") == time_ and x.get("title") == title)]
         vs.save_history(items)
         return True
-
-    # ---------------------------------------------------------------- plumbing
-    def _push(self, fn, *args):
-        if not self.window:
-            return
-        try:
-            self.window.evaluate_js(f"{fn}({', '.join(json.dumps(a) for a in args)})")
-        except Exception:
-            pass
-
 
 def main():
     if not vs.internet_ok():

@@ -60,6 +60,8 @@ const MOCK_HISTORY = [
     files: [{ path: "C:/fake/meeting_transcript.txt", name: "meeting_transcript.txt" }], exists: true },
 ];
 
+const _mockTicks = {};
+
 function callApi(name, ...args) {
   if (window.pywebview && window.pywebview.api && window.pywebview.api[name]) {
     return window.pywebview.api[name](...args);
@@ -76,6 +78,19 @@ function callApi(name, ...args) {
     ok: true, jobId: "mock-job-" + Math.random().toString(36).slice(2),
     title: "Mock " + args[0].mode + " job", stoppable: args[0].mode === "watch",
   });
+  if (name === "get_model_progress") {
+    const key = "m:" + args[0];
+    const n = (_mockTicks[key] = (_mockTicks[key] || 0) + 1);
+    const pct = Math.min(100, n * 25);
+    return Promise.resolve({ pct, err: null, done: pct >= 100 });
+  }
+  if (name === "get_job_log") {
+    const [jobId, offset] = args;
+    const key = "j:" + jobId;
+    const n = (_mockTicks[key] = (_mockTicks[key] || 0) + 1);
+    const lines = n <= 3 ? [`mock log line ${n}\n`] : [];
+    return Promise.resolve({ lines, done: n > 3, nextOffset: offset + lines.length });
+  }
   if (name.startsWith("start_")) return Promise.resolve("mock-job-" + Math.random().toString(36).slice(2));
   return Promise.resolve({ ok: true, mock: true });
 }
@@ -132,26 +147,35 @@ function onModelClick(m) {
   renderModels();
   toast(`Downloading ${m.name}...`);
   callApi("download_model", m.name);
+  pollModelProgress(m);
 }
 
-window.onModelProgress = function (name, pct, err) {
-  const m = state.models.find((x) => x.name === name);
-  if (!m) return;
-  if (err) {
-    m._downloading = false;
-    toast(`${name} failed: ${err}`);
+// Polling, not a push from Python: window.evaluate_js() called from a background
+// thread can hang pywebview's EdgeChromium backend, so Python only ever buffers
+// progress and the page pulls it on an interval via the normal js_api call path.
+function pollModelProgress(m) {
+  const tick = async () => {
+    const p = await callApi("get_model_progress", m.name);
+    if (p.err) {
+      m._downloading = false;
+      toast(`${m.name} failed: ${p.err}`);
+      renderModels();
+      return;
+    }
+    m._progress = p.pct;
     renderModels();
-    return;
-  }
-  m._progress = pct;
-  if (pct >= 100) {
-    m.downloaded = true;
-    m._downloading = false;
-    state.selectedModel = name;
-    toast(`${name} downloaded`);
-  }
-  renderModels();
-};
+    if (p.done) {
+      m.downloaded = true;
+      m._downloading = false;
+      state.selectedModel = m.name;
+      toast(`${m.name} downloaded`);
+      renderModels();
+      return;
+    }
+    setTimeout(tick, 500);
+  };
+  tick();
+}
 
 function renderSpoken() {
   const sel = document.getElementById("spokenSelect");
@@ -242,21 +266,7 @@ function wireNav() {
 }
 
 // ---------------------------------------------------------------- job log panels
-const jobLogs = {};
-
-window.onJobLog = function (jobId, line) {
-  const j = jobLogs[jobId];
-  if (!j) return;
-  j.bodyEl.textContent += line;
-  j.bodyEl.scrollTop = j.bodyEl.scrollHeight;
-};
-window.onJobDone = function (jobId) {
-  const j = jobLogs[jobId];
-  if (!j) return;
-  j.statusEl.textContent = "Done";
-  j.statusEl.classList.add("done");
-};
-
+// Polling, not a push from Python - see pollModelProgress() above for why.
 function addJobPanel(containerEl, jobId, title, stoppable) {
   const wrap = document.createElement("div");
   wrap.className = "joblog";
@@ -267,10 +277,28 @@ function addJobPanel(containerEl, jobId, title, stoppable) {
       </span></div>
     <pre class="joblog-body"></pre>`;
   containerEl.prepend(wrap);
-  jobLogs[jobId] = { statusEl: wrap.querySelector(".joblog-status"), bodyEl: wrap.querySelector(".joblog-body") };
+  const statusEl = wrap.querySelector(".joblog-status");
+  const bodyEl = wrap.querySelector(".joblog-body");
   if (stoppable) {
     wrap.querySelector('[data-a="stop"]').addEventListener("click", () => callApi("stop_watch_job", jobId));
   }
+
+  let offset = 0;
+  const tick = async () => {
+    const r = await callApi("get_job_log", jobId, offset);
+    if (r.lines.length) {
+      bodyEl.textContent += r.lines.join("");
+      bodyEl.scrollTop = bodyEl.scrollHeight;
+      offset = r.nextOffset;
+    }
+    if (r.done) {
+      statusEl.textContent = "Done";
+      statusEl.classList.add("done");
+      return;
+    }
+    setTimeout(tick, 500);
+  };
+  tick();
 }
 
 // ---------------------------------------------------------------- Voice Cleanup tab
