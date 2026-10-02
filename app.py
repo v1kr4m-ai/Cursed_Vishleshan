@@ -66,6 +66,21 @@ def _run_job(target_fn, *args, **kwargs):
     return job_id
 
 
+def _with_model(model_name, fn):
+    """Job body: load the Whisper model, then fn(model). load_whisper() calls sys.exit() on
+    failure, which would silently kill a bridge thread - here it becomes a visible log line."""
+    if not vs.is_downloaded(model_name):
+        print(f"[!] The '{model_name}' model isn't fully downloaded. Click it in the model list on "
+              f"Home to download it (or pick another model), then press Start again.")
+        return
+    try:
+        model = vs.load_whisper(model_name)
+    except SystemExit:
+        print(f"[!] Could not load the '{model_name}' model - see the message above.")
+        return
+    return fn(model)
+
+
 class Api:
     def __init__(self):
         self._window = None
@@ -168,9 +183,9 @@ class Api:
             folder = self.pick_folder()
             if not folder:
                 return {"ok": False, "message": "No folder selected."}
-            model = vs.load_whisper(s["model"])
             stop_event = threading.Event()
-            job_id = _run_job(vs.run_watch, Path(folder), s, model, online, stop_event=stop_event)
+            job_id = _run_job(_with_model, s["model"], lambda m: vs.run_watch(
+                Path(folder), s, m, online, stop_event=stop_event))
             WATCH_EVENTS[job_id] = stop_event
             return {"ok": True, "jobId": job_id, "title": f"Watch: {Path(folder).name}", "stoppable": True}
 
@@ -178,9 +193,8 @@ class Api:
             video = self.pick_file()
             if not video:
                 return {"ok": False, "message": "No file selected."}
-            model = vs.load_whisper(s["model"])
-            job_id = _run_job(vs.process_video, Path(video), s, model, online,
-                              kind="file", source=None, open_result=True)
+            job_id = _run_job(_with_model, s["model"], lambda m: vs.process_video(
+                Path(video), s, m, online, kind="file", source=None, open_result=True))
             return {"ok": True, "jobId": job_id, "title": f"File: {Path(video).name}"}
 
         if mode == "folder":
@@ -194,8 +208,8 @@ class Api:
             if not todo:
                 return {"ok": False, "message": f"{len(vids)} file(s) found - all {len(skipped)} already done."}
             items = [{"path": v, "kind": "file"} for v in todo]
-            model = vs.load_whisper(s["model"])
-            job_id = _run_job(vs.run_batch, items, s, model, online, report_dir)
+            job_id = _run_job(_with_model, s["model"], lambda m: vs.run_batch(
+                items, s, m, online, report_dir))
             return {"ok": True, "jobId": job_id, "title": f"Folder: {report_dir.name}"}
 
         if mode == "url":
@@ -205,8 +219,7 @@ class Api:
             if not online:
                 return {"ok": False, "message": "Downloading a link needs internet."}
             cfg = dict(s, url=url)
-            model = vs.load_whisper(s["model"])
-            job_id = _run_job(vs._run_url_job, cfg, model, online)
+            job_id = _run_job(_with_model, s["model"], lambda m: vs._run_url_job(cfg, m, online))
             return {"ok": True, "jobId": job_id, "title": "URL: " + url[:40]}
 
         return {"ok": False, "message": f"Unknown mode: {mode}"}
