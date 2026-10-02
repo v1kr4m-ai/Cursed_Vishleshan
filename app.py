@@ -16,6 +16,7 @@ from pathlib import Path
 
 import webview
 
+import live
 import video_summarizer as vs
 
 WEB_DIR = Path(__file__).with_name("web")
@@ -26,6 +27,7 @@ WEB_DIR = Path(__file__).with_name("web")
 JOBS = {}             # job_id -> {"lines": [str, ...], "done": bool}
 MODEL_PROGRESS = {}   # model_name -> {"pct": int|None, "err": str|None, "done": bool}
 WATCH_EVENTS = {}     # job_id -> threading.Event, for the Watch mode Stop button
+LIVE = {}             # session_id -> live.LiveSession
 
 
 def _noise_label(value: str) -> str:
@@ -153,7 +155,14 @@ class Api:
         vs.VOCAB = vs.load_vocab()
 
         if mode in ("mic", "system", "call"):
-            return {"ok": False, "message": "Live capture lands in a future update."}
+            sess = live.LiveSession(dict(s), online, mode)
+            if sess.error:
+                return {"ok": False, "message": sess.error}
+            sid = str(uuid.uuid4())
+            LIVE[sid] = sess
+            title = {"mic": "Live microphone", "system": "System audio", "call": "Live call"}[mode]
+            return {"ok": True, "live": True, "sid": sid, "mode": mode, "title": title,
+                    "devices": sess.devices(), "outputs": [o for o in s.get("outputs", []) if o != "Original"]}
 
         if mode == "watch":
             folder = self.pick_folder()
@@ -201,6 +210,45 @@ class Api:
             return {"ok": True, "jobId": job_id, "title": "URL: " + url[:40]}
 
         return {"ok": False, "message": f"Unknown mode: {mode}"}
+
+    # ---------------------------------------------------------------- Live capture
+    def live_record(self, sid, mic_name=None, sys_name=None):
+        return LIVE[sid].start(mic_name, sys_name)
+
+    def live_stop(self, sid):
+        LIVE[sid].stop()
+        return True
+
+    def live_poll(self, sid, offset=0):
+        s = LIVE.get(sid)
+        return s.poll(offset) if s else {"events": [], "next": offset, "closed": True}
+
+    def live_alert_words(self, sid, words):
+        LIVE[sid].set_alert_words(words)
+        return True
+
+    def live_translate(self, sid, target):
+        LIVE[sid].translate(target)
+        return True
+
+    def live_read(self, sid, text, lang):
+        LIVE[sid].read_aloud(text, lang)
+        return True
+
+    def live_text(self, sid):
+        return LIVE[sid].plain_text()
+
+    def live_save(self, sid):
+        return LIVE[sid].save()
+
+    def live_clear(self, sid):
+        return LIVE[sid].clear()
+
+    def live_close(self, sid):
+        s = LIVE.pop(sid, None)
+        if s:
+            s.close()
+        return True
 
     def stop_watch_job(self, job_id):
         ev = WATCH_EVENTS.get(job_id)

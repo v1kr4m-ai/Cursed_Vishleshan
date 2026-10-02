@@ -77,7 +77,15 @@ function callApi(name, ...args) {
   if (name === "start_job") return Promise.resolve({
     ok: true, jobId: "mock-job-" + Math.random().toString(36).slice(2),
     title: "Mock " + args[0].mode + " job", stoppable: args[0].mode === "watch",
+    ...(["mic", "system", "call"].includes(args[0].mode) ? { live: true, sid: "mock-live", mode: args[0].mode,
+      devices: { mic: ["Default microphone"], sys: [], call: false, source: args[0].mode }, outputs: ["English"] } : {}),
   });
+  if (name === "live_poll") {
+    const n = (_mockTicks["l"] = (_mockTicks["l"] || 0) + 1);
+    const ev = n === 1 ? [["ready", "tiny"]] : n === 3 ? [["commit", "mic", "hello from the mock", "en", null, "English"]] : [];
+    return Promise.resolve({ events: ev, next: args[1] + ev.length, recording: false, finalizing: false,
+      ready: true, busy: false, hasEntries: n >= 3, speaking: false, levels: { mic: 30 }, language: "English (100%)" });
+  }
   if (name === "get_model_progress") {
     const key = "m:" + args[0];
     const n = (_mockTicks[key] = (_mockTicks[key] || 0) + 1);
@@ -475,6 +483,7 @@ function wireStart() {
       toast((res && res.message) || "Could not start.");
       return;
     }
+    if (res.live) { addLivePanel(res); return; }
     addJobPanel(document.getElementById("jobPanels"), res.jobId, res.title, res.stoppable);
   });
 }
@@ -491,3 +500,125 @@ async function boot() {
 }
 
 boot();
+
+// ---------------------------------------------------------------- Live capture panel
+// Polls live_poll() - Python never pushes into the page.
+function addLivePanel(info) {
+  const wrap = document.createElement("div");
+  wrap.className = "livepanel card full";
+  const d = info.devices;
+  const opt = (arr) => arr.map((n) => `<option>${n}</option>`).join("");
+  wrap.innerHTML = `
+    <div class="joblog-head"><span>${info.title}</span>
+      <span class="joblog-actions"><span class="joblog-status" data-t="status">Loading Whisper model...</span>
+        <button class="ghostbtn tiny" data-a="close">Close</button></span></div>
+    <div class="liverow">
+      <button class="startbtn small recbtn" data-a="rec" disabled>&#9679;&ensp;Record</button>
+      <div class="meters" data-t="meters"></div>
+      <span class="muted small" data-t="lang">Language: -</span>
+    </div>
+    <div class="liverow">
+      ${d.mic.length ? `<select class="select" data-t="mic">${opt(d.mic)}</select>` : ""}
+      ${d.sys.length ? `<select class="select" data-t="sys">${opt(d.sys)}</select>` : ""}
+    </div>
+    <div class="livetext" data-t="text"></div>
+    <div class="liverow">
+      <input type="text" class="select" data-t="alerts" placeholder="Alert words (comma separated)">
+    </div>
+    <div class="liverow">
+      <select class="select" data-t="target" style="max-width:180px;"></select>
+      <button class="ghostbtn" data-a="translate" disabled>Translate</button>
+      <button class="ghostbtn" data-a="read">Read aloud</button>
+      <span class="muted small" data-t="msg"></span>
+    </div>
+    <pre class="historytext" data-t="out" style="min-height:60px;margin:0 14px;"></pre>
+    <div class="liverow">
+      <button class="startbtn small" data-a="save" disabled>Save</button>
+      <button class="ghostbtn" data-a="copy">Copy text</button>
+      <button class="ghostbtn" data-a="clear">Clear</button>
+    </div>`;
+  document.getElementById("livePanels").prepend(wrap);
+  const t = (n) => wrap.querySelector(`[data-t="${n}"]`);
+  const a = (n) => wrap.querySelector(`[data-a="${n}"]`);
+  const sid = info.sid;
+  const targets = ["English", "Hindi", "Urdu", "French", "German", "Spanish", "Arabic", "Chinese", "Japanese"];
+  t("target").innerHTML = opt([...new Set([...(info.outputs || []), ...targets])]);
+  const keys = d.call ? ["mic", "sys"] : [d.source === "system" ? "sys" : "mic"];
+  t("meters").innerHTML = keys.map((k) => `<span class="meter"><i data-k="${k}"></i></span>`).join("");
+
+  let offset = 0, recording = false, closed = false, lastLabel = null, prov = {};
+  const textEl = t("text");
+  const renderProv = () => {
+    let el = textEl.querySelector(".prov");
+    if (!el) { el = document.createElement("span"); el.className = "prov"; textEl.appendChild(el); }
+    el.textContent = Object.values(prov).filter(Boolean).join("   ");
+  };
+  const applyEvent = (ev) => {
+    const [kind, ...r] = ev;
+    if (kind === "ready") { t("status").textContent = `Ready - press Record (model: ${r[0]})`; a("rec").disabled = false; }
+    else if (kind === "error") t("status").textContent = r[0];
+    else if (kind === "commit") {
+      const [key, text, , who, langName] = r;
+      delete prov[key];
+      textEl.querySelector(".prov")?.remove();
+      const label = [who, langName].filter(Boolean).join(" \u00b7 ");
+      if (label !== lastLabel) {
+        const tag = document.createElement("span");
+        tag.className = "langtag"; tag.textContent = (lastLabel ? "\n" : "") + `[${label}] `;
+        textEl.appendChild(tag); lastLabel = label;
+      }
+      textEl.appendChild(document.createTextNode(text + " "));
+      renderProv(); textEl.scrollTop = textEl.scrollHeight;
+    } else if (kind === "prov") { prov[r[0]] = r[1]; renderProv(); textEl.scrollTop = textEl.scrollHeight; }
+    else if (kind === "alert") t("status").textContent = `ALERT: '${r[0].join(", ")}' at ${Math.round(r[1])}s`;
+    else if (kind === "stopped") {
+      prov = {}; renderProv(); a("rec").disabled = false; a("rec").innerHTML = "&#9679;&ensp;Record";
+      t("status").textContent = "Stopped - press Record to continue, or translate / read / save below";
+    } else if (kind === "translated") {
+      const [target, text, by] = r;
+      t("out").textContent = text ? text.replace(/^\[\d\d:\d\d:\d\d\]\s*/gm, "") : "";
+      t("msg").textContent = text ? `${target} - by ${by}` : `No translator available for ${target} (needs Claude Code, Ollama or LM Studio)`;
+    } else if (kind === "speech") t("msg").textContent = r[0];
+  };
+  const tick = async () => {
+    if (closed) return;
+    const p = await callApi("live_poll", sid, offset);
+    if (p.closed) return;
+    p.events.forEach(applyEvent);
+    offset = p.next;
+    recording = p.recording;
+    wrap.querySelectorAll("[data-k]").forEach((m) => { m.style.width = (p.levels[m.dataset.k] || 0) + "%"; });
+    if (p.language) t("lang").textContent = "Language: " + p.language;
+    const idle = !p.recording && !p.finalizing;
+    a("translate").disabled = !(idle && p.hasEntries && !p.busy);
+    a("save").disabled = !(idle && p.hasEntries);
+    a("read").textContent = p.speaking ? "Stop reading" : "Read aloud";
+    setTimeout(tick, 400);
+  };
+  tick();
+
+  a("rec").addEventListener("click", async () => {
+    if (!recording) {
+      const r = await callApi("live_record", sid, t("mic") ? t("mic").value : null, t("sys") ? t("sys").value : null);
+      if (!r.ok) { toast(r.message); return; }
+      recording = true;
+      a("rec").innerHTML = "&#9632;&ensp;Stop";
+      t("status").textContent = { mic: "Listening... speak now", system: "Capturing PC sound...", call: "Capturing the call - both sides..." }[d.source];
+    } else {
+      a("rec").disabled = true; t("status").textContent = "Finishing the last words...";
+      await callApi("live_stop", sid);
+    }
+  });
+  t("alerts").addEventListener("input", (e) => callApi("live_alert_words", sid, e.target.value));
+  a("translate").addEventListener("click", () => { t("msg").textContent = "Translating..."; callApi("live_translate", sid, t("target").value); });
+  a("read").addEventListener("click", () => callApi("live_read", sid, t("out").textContent.trim(), t("target").value));
+  a("save").addEventListener("click", async () => { const r = await callApi("live_save", sid); toast("Saved to " + r.dir); });
+  a("copy").addEventListener("click", async () => {
+    await navigator.clipboard.writeText(await callApi("live_text", sid)); toast("Text copied");
+  });
+  a("clear").addEventListener("click", async () => {
+    if (!(await callApi("live_clear", sid))) return;
+    textEl.innerHTML = ""; lastLabel = null; prov = {}; t("out").textContent = ""; t("msg").textContent = "";
+  });
+  a("close").addEventListener("click", async () => { closed = true; await callApi("live_close", sid); wrap.remove(); });
+}
