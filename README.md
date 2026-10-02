@@ -14,7 +14,7 @@ A Windows desktop app that transcribes, translates and summarizes videos, audio 
 - **Online/Offline toggle:** one switch that sets sensible tool defaults (which never disables any option) — summaries/translations try, in order: Claude Code CLI → Ollama → LM Studio → (English only) Whisper's own offline translation
 - **Offline Settings:** pick exactly which installed Ollama / LM Studio model is used, instead of whatever happens to be listed first
 
-Every feature opens as its own tab in one persistent window — nothing closes or gets replaced when you start something new.
+The interface is a `pywebview` desktop window (HTML/CSS/JS in `web/`) - a native window, no browser or server address involved. Pick a Whisper model, spoken language and source on **Home**; voice cleanup, music isolation, Ollama/LM Studio models and history have their own tabs.
 
 ## Setup
 
@@ -37,19 +37,20 @@ Optional extras:
 
 ## Usage
 
-**New UI (in progress):** `python app.py` — a `pywebview`-based rewrite of the interface
-(`web/`), aiming for a cleaner, production-styled look. All processing logic still lives
-in `video_summarizer.py`; `app.py` is a thin bridge to it. Currently only the Home tab
-(model picker, language/source, settings) is wired up - Start and the other tabs land in
-upcoming updates.
-
-**Current UI:**
-
 ```bash
-python video_summarizer.py
+python app.py
 ```
 
-or double-click `Cursed_Vishleshan.bat`. Pick a Whisper model, spoken language and source on the **Home** tab, then **Start** — the feature opens in its own tab. Voice cleanup mode, background-music isolation, and which Ollama/LM Studio model gets used are all under **Settings** (menu bar, or the button on Home) and apply everywhere.
+or double-click `Cursed_Vishleshan.bat`.
+
+## Layout
+
+- `app.py` - pywebview host and the JS bridge (`Api`). The page polls Python for job logs, model-download progress and live-capture events; Python never pushes into the page.
+- `live.py` - GUI-free live capture engine (microphone / PC sound / call).
+- `video_summarizer.py` - processing backend: transcription, translation, summaries, voice cleanup, history, settings. No GUI code.
+- `web/` - `index.html`, `style.css`, `app.js` (falls back to mock data when opened outside pywebview, for design work).
+
+Not carried over from the earlier Tkinter interface: the always-on-top live caption bar and the "clean up & re-transcribe" action (still in git history before the Stage 5 commit).
 
 ## Install
 
