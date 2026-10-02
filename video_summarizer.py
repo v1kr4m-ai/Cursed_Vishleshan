@@ -344,7 +344,7 @@ def demucs_isolate_music(src44: Path, out: Path):
     return _demucs_run(src44, out, keep="music", mono=False, what="background music")
 
 
-def _demucs_run(src44: Path, out: Path, keep: str, mono: bool, what: str):
+def _demucs_run(src44: Path, out: Path, keep: str, mono: bool, what: str, _retry=True):
     try:
         import numpy as np
         import torch
@@ -390,6 +390,12 @@ def _demucs_run(src44: Path, out: Path, keep: str, mono: bool, what: str):
         print()
         return out
     except Exception as e:
+        if dev == "cuda" and _retry and "cudnn" in str(e).lower():
+            # Whisper's CUDA-12 cuDNN DLLs (see _add_nvidia_dlls) can shadow the cuDNN that
+            # PyTorch's own CUDA build ships. Run the same GPU work without cuDNN instead.
+            print("\n  [i] cuDNN version clash - retrying on the GPU without cuDNN...")
+            torch.backends.cudnn.enabled = False
+            return _demucs_run(src44, out, keep, mono, what, _retry=False)
         print(f"\n  [!] Isolating {what} failed ({str(e)[:150]}) - continuing without it.")
         return None
 

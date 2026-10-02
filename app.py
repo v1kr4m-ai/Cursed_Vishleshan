@@ -152,7 +152,7 @@ class Api:
         return MODEL_PROGRESS.get(name, {"pct": None, "err": None, "done": False})
 
     def pick_file(self):
-        types = ("Video/Audio files (" + ";".join(
+        types = ("Video and audio files (" + ";".join(
             f"*{e}" for e in (".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v", ".wmv", ".flv",
                               ".mpg", ".mpeg", ".3gp", ".mp3", ".wav", ".m4a", ".aac", ".ogg",
                               ".flac")) + ")", "All files (*.*)")
