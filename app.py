@@ -66,7 +66,7 @@ def _run_job(target_fn, *args, **kwargs):
 
 class Api:
     def __init__(self):
-        self.window = None
+        self._window = None
 
     # ---------------------------------------------------------------- Home tab
     def get_home_data(self):
@@ -139,11 +139,11 @@ class Api:
             f"*{e}" for e in (".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v", ".wmv", ".flv",
                               ".mpg", ".mpeg", ".3gp", ".mp3", ".wav", ".m4a", ".aac", ".ogg",
                               ".flac")) + ")", "All files (*.*)")
-        result = self.window.create_file_dialog(webview.OPEN_DIALOG, file_types=types)
+        result = self._window.create_file_dialog(webview.OPEN_DIALOG, file_types=types)
         return result[0] if result else None
 
     def pick_folder(self):
-        result = self.window.create_file_dialog(webview.FOLDER_DIALOG)
+        result = self._window.create_file_dialog(webview.FOLDER_DIALOG)
         return result[0] if result else None
 
     def start_job(self, payload):
@@ -341,7 +341,7 @@ def main():
     window = webview.create_window(
         "Cursed_Vishleshan", url=str(WEB_DIR / "index.html"), js_api=api,
         width=1180, height=800, min_size=(900, 620), background_color="#eef0f3")
-    api.window = window
+    api._window = window
     webview.start()
 
 
