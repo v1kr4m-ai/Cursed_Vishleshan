@@ -470,7 +470,11 @@ function wireNav() {
 
 // Every tool run (file / folder / link / watch / live / cleanup / music) opens its own tab up
 // in the nav bar, so it can be switched to without scrolling.
-function openToolTab(title) {
+// One tab per feature (key): a second run of the same feature reuses that tab and its job
+// panels stack inside it; the jobs themselves queue in Python and start one after another.
+function openToolTab(title, key) {
+  const existing = key && Object.values(TOOL_TABS).find((t) => t.key === key);
+  if (existing) { activateTab(existing.id); return existing; }
   const id = "tool" + (++toolSeq);
   const pill = document.createElement("button");
   pill.className = "pill tool"; pill.dataset.tab = id;
@@ -482,9 +486,10 @@ function openToolTab(title) {
   view.className = "view toolview"; view.id = "view-" + id;
   document.querySelector(".page").appendChild(view);
   const tab = {
-    id, view, pill, onClose: null,
-    setDone() { pill.classList.add("done"); },
-    setOnClose(fn) { tab.onClose = fn; },
+    id, key, view, pill, onClose: [], pending: 0,
+    jobStarted() { tab.pending++; pill.classList.remove("done"); },
+    jobDone() { if (--tab.pending <= 0) pill.classList.add("done"); },
+    setOnClose(fn) { tab.onClose.push(fn); },
     close() { closeToolTab(id); },
   };
   TOOL_TABS[id] = tab;
@@ -495,7 +500,7 @@ function openToolTab(title) {
 function closeToolTab(id) {
   const tab = TOOL_TABS[id];
   if (!tab) return;
-  if (tab.onClose) tab.onClose();
+  tab.onClose.forEach((fn) => fn());
   tab.pill.remove(); tab.view.remove();
   delete TOOL_TABS[id];
   activateTab("home");
@@ -503,7 +508,9 @@ function closeToolTab(id) {
 
 // ---------------------------------------------------------------- job log panels
 // Polling, not a push from Python - see pollModelProgress() above for why.
-function addJobPanel(containerEl, jobId, title, stoppable, onDone) {
+function addJobPanel(tab, jobId, title, stoppable) {
+  const containerEl = tab.view;
+  tab.jobStarted();
   const wrap = document.createElement("div");
   wrap.className = "joblog";
   wrap.innerHTML = `<div class="joblog-head"><span>${title}</span>
@@ -530,9 +537,10 @@ function addJobPanel(containerEl, jobId, title, stoppable, onDone) {
     if (r.done) {
       statusEl.textContent = "Done";
       statusEl.classList.add("done");
-      if (onDone) onDone();
+      tab.jobDone();
       return;
     }
+    statusEl.textContent = r.queued ? `Queued - ${r.queued} ahead` : "Running...";
     setTimeout(tick, 500);
   };
   tick();
@@ -632,8 +640,8 @@ function buildFileTool(containerId, verb, onRun) {
   runBtn.addEventListener("click", async () => {
     const jobId = await onRun(tool.src, tool.outDir);
     const name = tool.src.split(/[\\/]/).pop();
-    const tab = openToolTab(`${verb}: ${name}`);
-    addJobPanel(tab.view, jobId, name, false, () => tab.setDone());
+    const tab = openToolTab(verb, "tool:" + verb);
+    addJobPanel(tab, jobId, name, false);
   });
 }
 
@@ -786,6 +794,10 @@ function wireStart() {
     const startBtn = document.getElementById("startBtn");
     const payload = { mode: state.mode };
     if (state.mode === "url") payload.url = document.getElementById("urlInput").value.trim();
+    if (["mic", "system", "call"].includes(state.mode)) {
+      const open = Object.values(TOOL_TABS).find((t) => t.key === "mode:" + state.mode);
+      if (open) { activateTab(open.id); toast("Already open - use this tab."); return; }
+    }
     startBtn.disabled = true;
     let res;
     try {
@@ -797,9 +809,9 @@ function wireStart() {
       toast((res && res.message) || "Could not start.");
       return;
     }
-    const tab = openToolTab(res.title);
+    const tab = openToolTab(res.live ? res.title : ({ file: "File", folder: "Folder", url: "Link", watch: "Watch" }[state.mode] || res.title), "mode:" + state.mode);
     if (res.live) { addLivePanel(res, tab); return; }
-    addJobPanel(tab.view, res.jobId, res.title, res.stoppable, () => tab.setDone());
+    addJobPanel(tab, res.jobId, res.title, res.stoppable);
     if (res.stoppable) tab.setOnClose(() => callApi("stop_watch_job", res.jobId));
   });
 }

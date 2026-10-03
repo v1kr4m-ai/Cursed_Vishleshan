@@ -89,18 +89,40 @@ def _run_job(target_fn, *args, **kwargs):
     PROCESSING_LOCK), buffering its print() output for get_job_log() to poll."""
     job_id = str(uuid.uuid4())
     JOBS[job_id] = {"lines": [], "done": False}
-
-    def worker():
-        with vs.PROCESSING_LOCK:
-            try:
-                with contextlib.redirect_stdout(_JobBuffer(job_id)):
-                    target_fn(*args, **kwargs)
-            except Exception as e:
-                JOBS[job_id]["lines"].append(f"\n[!] {e}\n")
-            finally:
-                JOBS[job_id]["done"] = True
-    threading.Thread(target=worker, daemon=True).start()
+    _QUEUE.append((job_id, target_fn, args, kwargs))
+    _QUEUE_WAKE.release()
+    global _WORKER
+    if _WORKER is None:
+        _WORKER = threading.Thread(target=_queue_worker, daemon=True)
+        _WORKER.start()
     return job_id
+
+
+_QUEUE = []                           # waiting jobs, first in first out
+_QUEUE_WAKE = threading.Semaphore(0)  # one release per queued job
+_WORKER = None
+
+
+def _queue_worker():
+    """Runs queued jobs one after another; a job starts as soon as the previous one finishes."""
+    while True:
+        _QUEUE_WAKE.acquire()
+        job_id, target_fn, args, kwargs = _QUEUE.pop(0)
+        try:
+            with contextlib.redirect_stdout(_JobBuffer(job_id)):
+                target_fn(*args, **kwargs)
+        except Exception as e:
+            JOBS[job_id]["lines"].append(f"\n[!] {e}\n")
+        finally:
+            JOBS[job_id]["done"] = True
+
+
+def _queue_position(job_id):
+    """0 = running now (or done); n = number of jobs ahead of it."""
+    for i, item in enumerate(_QUEUE):
+        if item[0] == job_id:
+            return i + 1
+    return 0
 
 
 def _with_model(model_name, fn):
@@ -400,7 +422,8 @@ class Api:
         if not j:
             return {"lines": [], "done": True}
         lines = j["lines"][offset:]
-        return {"lines": lines, "done": j["done"], "nextOffset": offset + len(lines)}
+        return {"lines": lines, "done": j["done"], "nextOffset": offset + len(lines),
+                "queued": _queue_position(job_id)}
 
     def _online(self):
         s = vs.load_settings()
