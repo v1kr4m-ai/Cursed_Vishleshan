@@ -147,7 +147,7 @@ function createDeck(host, o) {
   const deck = host.querySelector(".deck");
   const q = (n) => host.querySelector(`[data-t="${n}"]`);
   const isOpen = () => deck.classList.contains("open");
-  const setOpen = (v) => deck.classList.toggle("open", v);
+  const setOpen = (v) => { deck.classList.toggle("open", v); host.classList.toggle("pinned", v); };
 
   host.querySelector(".deck-card").addEventListener("click", () => { if (!isOpen()) setOpen(true); });
   host.querySelector(".deck-head").addEventListener("click", (e) => {
@@ -394,6 +394,17 @@ function wireStats() {
     document.getElementById("onlineLabel").textContent =
       state.onlinePref ? "Prefers online tools" : "Prefers offline tools";
     callApi("set_online", state.onlinePref);
+  });
+  document.getElementById("statModelsCard").addEventListener("click", async (e) => {
+    e.stopPropagation();
+    await refreshModels();
+    document.getElementById("modelDeck").scrollIntoView({ behavior: "smooth", block: "start" });
+    if (modelDeck) modelDeck.open();
+  });
+  document.getElementById("statGpuCard").addEventListener("click", () => {
+    toast(state.gpu === "cuda"
+      ? "Transcription runs on the NVIDIA GPU (CUDA) - fastest."
+      : "No usable NVIDIA GPU found - transcription runs on the CPU (slower).");
   });
   document.getElementById("statHistoryCard").addEventListener("click", () => activateTab("history"));
   document.getElementById("statCleanCard").addEventListener("click", () => activateTab("cleanup"));

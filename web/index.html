@@ -30,8 +30,10 @@
     <h1 class="welcome">Welcome back</h1>
 
     <section class="statrow" id="statRow">
-      <div class="statcard"><div class="statnum" id="statModels">-</div><div class="statlabel">Models downloaded</div></div>
-      <div class="statcard"><div class="statnum" id="statGpu">-</div><div class="statlabel">Device</div></div>
+      <div class="statcard clickable" id="statModelsCard" title="Open the model list and re-check what is on disk">
+        <div class="statnum" id="statModels">-</div><div class="statlabel">Models downloaded</div></div>
+      <div class="statcard clickable" id="statGpuCard" title="Which hardware runs the transcription">
+        <div class="statnum" id="statGpu">-</div><div class="statlabel">Device</div></div>
       <div class="statcard clickable" id="statHistoryCard" title="Open History">
         <div class="statnum" id="statHistory">-</div><div class="statlabel">Processed &middot; open history</div></div>
       <div class="statcard clickable" id="statModelCard" title="Choose the model">
@@ -41,20 +43,7 @@
     </section>
 
     <section class="dashgrid">
-      <div class="maincol">
-        <div class="card">
-          <h2>Spoken language</h2>
-          <select id="spokenSelect" class="select"></select>
-          <p class="muted small">The language in the recording. Auto-detect also handles mixed languages.</p>
-        </div>
-
-        <div class="card">
-          <h2>Output languages</h2>
-          <p class="muted small" style="margin:-6px 0 10px;">For every language ticked you get a translated transcript and a summary in it. <b>Original</b> keeps the language as spoken.</p>
-          <div id="outputChecks" class="checklist"></div>
-          <label class="checkrow"><input type="checkbox" id="speakSave"> Also save each translation as spoken audio</label>
-        </div>
-
+      <div class="maincol one">
         <div class="card full">
           <h2>What to process</h2>
           <div class="sourcegrid" id="sourceGrid"></div>
@@ -72,7 +61,22 @@
         </div>
       </div>
 
-      <div class="sidecol"><div id="modelDeck" class="deckhost"></div></div>
+      <div class="sidecol">
+        <div id="modelDeck" class="deckhost"></div>
+      <div class="card">
+        <h2>Spoken language</h2>
+        <select id="spokenSelect" class="select"></select>
+        <p class="muted small">The language in the recording. Auto-detect also handles mixed languages.</p>
+      </div>
+
+      <div class="card">
+        <h2>Output languages</h2>
+        <p class="muted small" style="margin:-6px 0 10px;">For every language ticked you get a translated transcript and a summary in it. <b>Original</b> keeps the language as spoken.</p>
+        <div id="outputChecks" class="checklist"></div>
+        <label class="checkrow"><input type="checkbox" id="speakSave"> Also save each translation as spoken audio</label>
+      </div>
+
+      </div>
     </section>
   </main>
 
@@ -80,8 +84,8 @@
     <h1 class="welcome">Voice Cleanup</h1>
     <p class="muted" style="margin:-12px 0 20px;">Used automatically by every feature - live capture, file, folder, URL, watch.</p>
     <section class="dashgrid">
-      <div class="maincol one">
-        <div class="card">
+      <div class="maincol">
+        <div class="card full">
           <h2>Options</h2>
           <p class="muted small" id="noiseHelp" style="margin-top:0;"></p>
           <div class="rowflex" id="keyRow" style="display:none; margin:10px 0;">
