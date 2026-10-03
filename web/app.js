@@ -511,6 +511,7 @@ function closeToolTab(id) {
 function addJobPanel(tab, jobId, title, stoppable) {
   const containerEl = tab.view;
   tab.jobStarted();
+  tab.setOnClose(() => callApi("cancel_job", jobId));
   const wrap = document.createElement("div");
   wrap.className = "joblog";
   wrap.innerHTML = `<div class="joblog-head"><span>${title}</span>

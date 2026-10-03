@@ -417,6 +417,18 @@ class Api:
             ev.set()
         return True
 
+    def cancel_job(self, job_id):
+        """Drop a job that is still waiting in the queue (a running one is left alone)."""
+        for i, item in enumerate(_QUEUE):
+            if item[0] == job_id:
+                if not _QUEUE_WAKE.acquire(blocking=False):
+                    return False  # worker already took it
+                _QUEUE.pop(i)
+                JOBS[job_id]["lines"].append("Cancelled before it started.\n")
+                JOBS[job_id]["done"] = True
+                return True
+        return False
+
     def get_job_log(self, job_id, offset=0):
         j = JOBS.get(job_id)
         if not j:
