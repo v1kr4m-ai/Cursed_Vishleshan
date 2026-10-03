@@ -139,7 +139,8 @@ const ICONS = {
 };
 
 function createDeck(host, o) {
-  host.innerHTML = `<div class="deck"><div class="deck-card">
+  if (o.hostClass) host.classList.add(o.hostClass);
+  host.innerHTML = `<div class="deck ${o.deckClass || ""}"><div class="deck-card">
       <div class="deck-head"><h2>${o.title}</h2>
         <span class="deck-tools" data-t="tools"></span><span class="deck-count" data-t="count"></span></div>
       <div class="deck-sub" data-t="sub"></div>
@@ -149,9 +150,11 @@ function createDeck(host, o) {
   const isOpen = () => deck.classList.contains("open");
   const setOpen = (v) => { deck.classList.toggle("open", v); host.classList.toggle("pinned", v); };
 
-  host.querySelector(".deck-card").addEventListener("click", () => { if (!isOpen()) setOpen(true); });
-  host.querySelector(".deck-head").addEventListener("click", (e) => {
-    if (isOpen() && !e.target.closest(".ic")) setOpen(false);
+  // header click toggles; a click anywhere else on a collapsed card opens it
+  host.querySelector(".deck-card").addEventListener("click", (e) => {
+    if (e.target.closest(".ic")) return;
+    if (e.target.closest(".deck-head")) setOpen(!isOpen());
+    else if (!isOpen()) setOpen(true);
   });
   document.addEventListener("click", (e) => { if (isOpen() && !deck.contains(e.target)) setOpen(false); });
 
@@ -162,10 +165,13 @@ function createDeck(host, o) {
     q("tools").appendChild(b);
   });
 
+  if (o.body) q("list").appendChild(o.body());
+
   function render() {
-    const items = o.items();
     q("count").textContent = o.count ? o.count() : "";
     q("sub").textContent = o.sub ? o.sub() : "";
+    if (o.body) return;
+    const items = o.items();
     const list = q("list");
     const scroll = list.scrollTop;
     list.innerHTML = "";
@@ -335,21 +341,40 @@ function renderSpoken() {
   sel.addEventListener("change", () => { state.spokenLanguage = sel.value; persistHome(); });
 }
 
-function renderOutputs() {
-  const box = document.getElementById("outputChecks");
-  box.innerHTML = state.outputChoices.map((name) => `
-    <label class="checkrow">
-      <input type="checkbox" data-out="${name}" ${state.outputs.includes(name) ? "checked" : ""}>
-      ${name}
-    </label>`).join("");
-  box.querySelectorAll("input").forEach((cb) => cb.addEventListener("change", () => {
+// Output languages: same stack-of-cards behaviour as the model deck (hover peeks, click pins open)
+let outputDeck = null;
+
+function buildOutputBody() {
+  const body = document.createElement("div");
+  body.innerHTML = `
+    <p class="deck-hint">For every language ticked you get a translated transcript and a summary in it.
+      <b>Original</b> keeps the language as spoken.</p>
+    <div class="checklist">${state.outputChoices.map((name) => `
+      <label class="checkrow"><input type="checkbox" data-out="${name}" ${state.outputs.includes(name) ? "checked" : ""}> ${name}</label>`).join("")}
+    </div>
+    <label class="checkrow" style="margin-top:8px;"><input type="checkbox" id="speakSave"> Also save each translation as spoken audio</label>`;
+  body.querySelectorAll("[data-out]").forEach((cb) => cb.addEventListener("change", () => {
     const name = cb.dataset.out;
     state.outputs = cb.checked ? [...state.outputs, name] : state.outputs.filter((n) => n !== name);
+    outputDeck.render();
     persistHome();
   }));
-  const speak = document.getElementById("speakSave");
+  const speak = body.querySelector("#speakSave");
   speak.checked = state.speakSave;
   speak.addEventListener("change", () => { state.speakSave = speak.checked; persistHome(); });
+  return body;
+}
+
+function renderOutputs() {
+  if (!outputDeck) {
+    outputDeck = createDeck(document.getElementById("outputDeck"), {
+      title: "Output languages", deckClass: "fold", hostClass: "fold",
+      count: () => state.outputs.length,
+      sub: () => state.outputs.length ? state.outputs.join(", ") : "None ticked - tick at least one",
+      body: buildOutputBody,
+    });
+  }
+  outputDeck.render();
 }
 
 function renderSources() {
