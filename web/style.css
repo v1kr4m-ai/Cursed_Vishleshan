@@ -381,16 +381,18 @@ html, body {
 
 /* ---- Round 3: language cards stack under the model deck ---- */
 .sidecol { display: flex; flex-direction: column; gap: 16px; }
-.deckhost { transition: height .3s ease; }
-.deckhost.pinned { height: 556px; }
 
 /* ---- Round 4: output languages as a fold (same stack animation as the model deck) ---- */
 .deck.fold:hover:not(.open) .deck-card { height: 330px; }
 .deck.fold.open .deck-card { height: 450px; }
-.deckhost.fold.pinned { height: 470px; }
 .deck.fold .deck-list { margin-top: 6px; }
 .deck-hint { font-size: 12px; color: #9aa0ab; margin: 4px 0 10px; line-height: 1.45; }
 .deck-hint b { color: #fff; }
 .deck .checklist { margin-bottom: 4px; }
 .deck .checkrow { color: #e8eaed; font-size: 13px; }
 .deck .checkrow input { accent-color: var(--accent); }
+
+/* an expanded deck floats over the cards below it instead of moving them */
+.deckhost:hover, .deckhost:focus-within { z-index: 20; }
+.deck { z-index: 20; }
+.deck:hover, .deck.open { z-index: 40; }

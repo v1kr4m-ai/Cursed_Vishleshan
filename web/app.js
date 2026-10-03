@@ -148,7 +148,7 @@ function createDeck(host, o) {
   const deck = host.querySelector(".deck");
   const q = (n) => host.querySelector(`[data-t="${n}"]`);
   const isOpen = () => deck.classList.contains("open");
-  const setOpen = (v) => { deck.classList.toggle("open", v); host.classList.toggle("pinned", v); };
+  const setOpen = (v) => deck.classList.toggle("open", v);
 
   // header click toggles; a click anywhere else on a collapsed card opens it
   host.querySelector(".deck-card").addEventListener("click", (e) => {
@@ -400,7 +400,6 @@ function renderStats() {
   document.getElementById("statModels").textContent =
     state.models.filter((m) => m.downloaded).length + " / " + state.models.length;
   document.getElementById("statGpu").textContent = state.gpu === "cuda" ? "GPU · CUDA" : "CPU";
-  document.getElementById("statHistory").textContent = state.historyCount;
   document.getElementById("statModel").textContent = activeModel() || "none";
   document.getElementById("statClean").textContent = shortClean(state.noiseLabel);
 
