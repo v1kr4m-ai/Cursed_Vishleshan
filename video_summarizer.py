@@ -1534,7 +1534,7 @@ def open_path(p, select=False):
 # ---------------------------------------------------------------- history
 HISTORY_FILE = SAVE_DIR / "history.json"
 KIND_LABELS = {"file": "Video", "url": "Link", "mic": "Microphone", "system": "System audio",
-               "call": "Call", "watch": "Watched"}
+               "call": "Call", "watch": "Watched", "cleanup": "Voice cleanup", "music": "Music extract"}
 
 
 def load_history():
@@ -1552,11 +1552,11 @@ def save_history(items):
         print(f"  [!] Could not update history: {e}")
 
 
-def add_history(kind, title, source, languages, duration, files):
+def add_history(kind, title, source, languages, duration, files, details=""):
     items = load_history()
     items.append({"time": datetime.datetime.now().isoformat(timespec="seconds"), "kind": kind,
                   "title": title, "source": str(source), "languages": languages,
-                  "duration": duration, "files": [str(f) for f in files]})
+                  "duration": duration, "files": [str(f) for f in files], "details": details})
     save_history(items)
 
 
@@ -1885,6 +1885,21 @@ def run_batch(items, cfg, model, online, report_dir: Path):
     if report:
         print(f"Report saved: {report}")
         open_path(report)
+
+
+def _audio_job_history(kind, title, src_path, out_path, mode, started):
+    """History entry for a cleanup / music job: what went in, how, what came out."""
+    import wave
+    try:
+        with wave.open(str(out_path)) as w:
+            dur = w.getnframes() / w.getframerate()
+    except Exception:
+        dur = 0
+    size = Path(out_path).stat().st_size / 1e6
+    details = "\n".join([
+        f"Source:   {src_path}", f"Mode:     {mode}", f"Output:   {out_path}",
+        f"Length:   {fmt(dur)}", f"Size:     {size:.1f} MB", f"Took:     {fmt(time.time() - started)}"])
+    add_history(kind, title, src_path, mode, dur, [out_path], details)
 
 
 def _run_music_job(src_path: Path, out_dir: Path):

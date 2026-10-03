@@ -761,7 +761,8 @@ function selectHistory(i) {
 async function showHistoryFile() {
   const sel = document.getElementById("historyFileSelect");
   const f = historySelected.files.find((x) => x.name === sel.value) || historySelected.files[0];
-  document.getElementById("historyText").textContent = f ? await callApi("read_history_file", f.path) : "";
+  const text = f ? await callApi("read_history_file", f.path) : "";
+  document.getElementById("historyText").textContent = text || historySelected.details || "";
 }
 
 document.getElementById("historyOpenBtn")?.addEventListener("click", () => {

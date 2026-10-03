@@ -488,6 +488,9 @@ class Api:
         def readable(e):
             return [f for f in e.get("files", []) if f.lower().endswith((".txt", ".md"))]
 
+        def shown(e):  # audio-result entries list their output file too
+            return e.get("files", []) if e.get("kind") in ("cleanup", "music") else readable(e)
+
         def matches(e):
             if not q:
                 return True
@@ -506,12 +509,15 @@ class Api:
                 "time": e.get("time"), "title": e.get("title", ""),
                 "when": when, "kind": vs.KIND_LABELS.get(e.get("kind"), e.get("kind", "")),
                 "languages": e.get("languages", ""), "length": vs.fmt(e.get("duration") or 0),
-                "files": [{"path": f, "name": Path(f).name} for f in readable(e)],
+                "files": [{"path": f, "name": Path(f).name} for f in shown(e)],
+                "details": e.get("details", ""),
                 "exists": any(Path(f).exists() for f in e.get("files", [])),
             })
         return out
 
     def read_history_file(self, path):
+        if not str(path).lower().endswith((".txt", ".md")):
+            return ""
         try:
             return Path(path).read_text(encoding="utf-8", errors="replace")
         except Exception as e:
