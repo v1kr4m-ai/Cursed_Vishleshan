@@ -1905,6 +1905,7 @@ def _audio_job_history(kind, title, src_path, out_path, mode, started):
 def _run_music_job(src_path: Path, out_dir: Path):
     """Standalone: isolate the background music/instrumental from a song and save it."""
     print(f"Isolating background music: {src_path}\n")
+    started = time.time()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     tmpdir = Path(tempfile.mkdtemp(prefix="vidsum_music_"))
@@ -1922,6 +1923,8 @@ def _run_music_job(src_path: Path, out_dir: Path):
             n += 1
         shutil.copyfile(result, out_path)
         print(f"\nSaved: {out_path}")
+        _audio_job_history("music", f"{src_path.stem} - background music", src_path, out_path,
+                           "Demucs vocal removal (Offline)", started)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -1929,6 +1932,7 @@ def _run_music_job(src_path: Path, out_dir: Path):
 def _run_cleanup_job(src_path: Path, out_dir: Path, noise_mode, online):
     """Standalone voice cleanup: clean one file's audio and save it - no transcription."""
     print(f"Cleaning up: {src_path}\n")
+    started = time.time()
     if noise_mode == "off":
         print('[!] Mode is "Off" - nothing to clean. Pick a mode in Voice Cleanup above first.')
         return
@@ -1944,6 +1948,8 @@ def _run_cleanup_job(src_path: Path, out_dir: Path, noise_mode, online):
             n += 1
         shutil.copyfile(audio_src, out_path)
         print(f"\nSaved: {out_path}")
+        _audio_job_history("cleanup", f"{src_path.stem} - cleaned voice", src_path, out_path,
+                           dict((v, k) for k, v in NOISE_CHOICES).get(noise_mode, noise_mode), started)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
