@@ -32,12 +32,11 @@
     <section class="statrow" id="statRow">
       <div class="statcard clickable" id="statHistoryCard" title="Open History - everything processed so far">
         <div class="statnum">History</div><div class="statlabel">Past results</div></div>
-      <div class="statcard clickable" id="statModelsCard" title="Open the model list and re-check what is on disk">
-        <div class="statnum" id="statModels">-</div><div class="statlabel">Models downloaded</div></div>
       <div class="statcard clickable" id="statGpuCard" title="Which hardware runs the transcription">
         <div class="statnum" id="statGpu">-</div><div class="statlabel">Device</div></div>
-      <div class="statcard clickable" id="statModelCard" title="Choose the model">
-        <div class="statnum" id="statModel">-</div><div class="statlabel">Model in use</div></div>
+      <div class="statcard clickable" id="statModelCard" title="Open the model list - the flag is how many models are downloaded">
+        <div class="statnum withflag"><span id="statModel" class="nm">-</span><span class="flag" id="statModels"></span></div>
+        <div class="statlabel">Model in use</div></div>
       <div class="statcard clickable" id="statCleanCard" title="Open Voice Cleanup">
         <div class="statnum" id="statClean">-</div><div class="statlabel">Voice cleanup</div></div>
     </section>

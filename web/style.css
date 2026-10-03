@@ -396,3 +396,11 @@ html, body {
 .deckhost:hover, .deckhost:focus-within { z-index: 20; }
 .deck { z-index: 20; }
 .deck:hover, .deck.open { z-index: 40; }
+
+/* model-in-use card: name + a small flag with the number of downloaded models */
+.statnum.withflag { display: flex; align-items: center; gap: 8px; }
+.statnum.withflag .nm { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.flag {
+  flex: none; font-size: 11px; font-weight: 700; line-height: 1; padding: 4px 8px; border-radius: 999px;
+  background: var(--accent); color: var(--accent-ink);
+}

@@ -398,7 +398,7 @@ function shortClean(label) {
 
 function renderStats() {
   document.getElementById("statModels").textContent =
-    state.models.filter((m) => m.downloaded).length + " / " + state.models.length;
+    state.models.filter((m) => m.downloaded).length + "/" + state.models.length;
   document.getElementById("statGpu").textContent = state.gpu === "cuda" ? "GPU · CUDA" : "CPU";
   document.getElementById("statModel").textContent = activeModel() || "none";
   document.getElementById("statClean").textContent = shortClean(state.noiseLabel);
@@ -419,12 +419,6 @@ function wireStats() {
       state.onlinePref ? "Prefers online tools" : "Prefers offline tools";
     callApi("set_online", state.onlinePref);
   });
-  document.getElementById("statModelsCard").addEventListener("click", async (e) => {
-    e.stopPropagation();
-    await refreshModels();
-    document.getElementById("modelDeck").scrollIntoView({ behavior: "smooth", block: "start" });
-    if (modelDeck) modelDeck.open();
-  });
   document.getElementById("statGpuCard").addEventListener("click", () => {
     toast(state.gpu === "cuda"
       ? "Transcription runs on the NVIDIA GPU (CUDA) - fastest."
@@ -432,9 +426,11 @@ function wireStats() {
   });
   document.getElementById("statHistoryCard").addEventListener("click", () => activateTab("history"));
   document.getElementById("statCleanCard").addEventListener("click", () => activateTab("cleanup"));
-  document.getElementById("statModelCard").addEventListener("click", (e) => {
+  // re-check what is on disk, then open the model list
+  document.getElementById("statModelCard").addEventListener("click", async (e) => {
     e.stopPropagation();
-    document.getElementById("modelDeck").scrollIntoView({ behavior: "smooth", block: "center" });
+    await refreshModels();
+    document.getElementById("modelDeck").scrollIntoView({ behavior: "smooth", block: "start" });
     if (modelDeck) modelDeck.open();
   });
 }
