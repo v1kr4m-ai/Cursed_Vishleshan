@@ -55,7 +55,7 @@ Applied automatically to every feature, and available as a standalone tool.
 - The ElevenLabs key is stored **encrypted with Windows DPAPI** (tied to your Windows account), never in plain text.
 
 ### Live capture (microphone / system audio / call)
-Record/Stop, input level meters, device pickers, committed text vs. provisional text while you speak, per-speaker labels in call mode, **alert words** (flags when a keyword is spoken), **Translate** to another language, **Read aloud**, **Save** (transcript + audio + history entry), Copy and Clear.
+Record/Stop, input level meters, device pickers, committed text vs. provisional text while you speak, per-speaker labels in call mode, a **live caption overlay** (always-on-top subtitle bar in its own small window - original words, fast offline English, or translated into another language; adjustable size, lines, width, opacity, colours, position, optional original-words line, no-background mode and read-aloud), **alert words** (flags when a keyword is spoken), **Translate** to another language, **Read aloud**, **Save** (transcript + audio + history entry), Copy and Clear.
 
 ### Settings and quality-of-life
 - **Online / Offline preference toggle:** sets which tools are preferred by default (Claude/ElevenLabs/edge-tts vs. Ollama/LM Studio/local cleanup). It never disables an option; an internet-status light shows real connectivity separately.
@@ -117,12 +117,11 @@ Settings live in `video_summarizer_settings.json` (not committed). The earlier T
 - GPU libraries are version-sensitive. Whisper's CUDA 12 cuDNN and PyTorch's CUDA 13 cuDNN can clash in one process; Demucs retries without cuDNN automatically when that happens.
 - A Whisper model whose download was interrupted shows up as not downloaded - click it again to re-download (needs internet).
 - The first Studio AI run is slow while models download; CPU-only Studio AI runs at roughly real-time speed.
-- Not carried over from the old interface: the always-on-top live caption bar, the "clean up & re-transcribe" action for live recordings, and the "only this part (e.g. 10:00-25:00)" clip range.
+- Not carried over from the old interface: the "clean up & re-transcribe" action for live recordings, and the "only this part (e.g. 10:00-25:00)" clip range.
 
 ## Roadmap - future features
 
 **Next up (parity with the old interface)**
-- Live caption overlay: always-on-top translated subtitle bar as a second window, with font / colour / position settings
 - "Clean up & re-transcribe" for live recordings
 - Clip range ("only this part") for file and link jobs
 - Stop/cancel for every running job, not just Watch

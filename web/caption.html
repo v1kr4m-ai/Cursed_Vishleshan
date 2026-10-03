@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>captions</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
+    -webkit-user-select: none; user-select: none; cursor: move; }
+  #bar { box-sizing: border-box; height: 100%; padding: 8px 18px; border-radius: 12px; display: flex;
+    flex-direction: column; justify-content: center; text-align: center; font-weight: 700;
+    border: 0 solid #d93025; transition: border-width .1s; overflow: hidden; }
+  #main { white-space: pre-wrap; word-break: break-word; }
+  #sub { font-weight: 400; opacity: .8; margin-top: 4px; }
+  #x { position: absolute; top: 4px; right: 8px; font: 700 14px sans-serif; color: #fff; opacity: 0;
+    cursor: pointer; text-shadow: 0 0 4px #000; }
+  body:hover #x { opacity: .8; }
+</style>
+</head>
+<body>
+<div id="bar"><div id="main">Captions will appear here</div><div id="sub"></div></div>
+<span id="x" title="Hide captions">&#10005;</span>
+<script>
+// Polls Python for the active caption text (Python never pushes into the page).
+const bar = document.getElementById("bar"), mainEl = document.getElementById("main"), subEl = document.getElementById("sub");
+
+function hexToRgb(h) { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+
+function apply(s, st) {
+  const [r, g, b] = hexToRgb(s.bg);
+  bar.style.background = s.no_bg ? "transparent" : `rgba(${r},${g},${b},${s.opacity})`;
+  bar.style.color = s.fg;
+  bar.style.fontFamily = `"${s.font}", "Segoe UI", sans-serif`;
+  mainEl.style.fontSize = s.size + "px";
+  subEl.style.fontSize = Math.max(9, Math.round(s.size * 0.55)) + "px";
+  bar.style.textShadow = s.no_bg ? "0 0 6px #000, 0 0 3px #000" : "none";
+  bar.style.borderWidth = st.alert ? "4px" : "0";
+}
+
+// keep only the newest words that fit the allowed number of lines
+function fit(text, lines) {
+  if (!text) return "";
+  const probe = document.createElement("span");
+  probe.style.cssText = "position:absolute;visibility:hidden;white-space:pre;" +
+    `font:700 ${mainEl.style.fontSize} ${bar.style.fontFamily}`;
+  document.body.appendChild(probe);
+  const max = bar.clientWidth - 40, out = [];
+  let cur = "";
+  for (const w of text.split(/\s+/).reverse()) {
+    const cand = (w + " " + cur).trim();
+    probe.textContent = cand;
+    if (cur && probe.offsetWidth > max) { out.unshift(cur); cur = w; if (out.length >= lines) { cur = ""; break; } }
+    else cur = cand;
+  }
+  if (cur && out.length < lines) out.unshift(cur);
+  probe.remove();
+  return out.slice(-lines).join("\n");
+}
+
+async function tick() {
+  try {
+    const api = window.pywebview && window.pywebview.api;
+    if (api && api.caption_state_active) {
+      const st = await api.caption_state_active();
+      apply(st.settings, st);
+      mainEl.textContent = fit(st.main, +st.settings.lines) || "";
+      subEl.textContent = st.sub || "";
+      subEl.style.display = st.settings.show_original && st.sub ? "block" : "none";
+    }
+  } catch (e) { /* bridge not ready yet */ }
+  setTimeout(tick, 300);
+}
+document.getElementById("x").addEventListener("click", () => window.pywebview.api.caption_hide());
+tick();
+</script>
+</body>
+</html>

@@ -28,6 +28,7 @@ JOBS = {}             # job_id -> {"lines": [str, ...], "done": bool}
 MODEL_PROGRESS = {}   # model_name -> {"pct": int|None, "err": str|None, "done": bool}
 WATCH_EVENTS = {}     # job_id -> threading.Event, for the Watch mode Stop button
 LIVE = {}             # session_id -> live.LiveSession
+CAPTION = {"sid": None, "window": None}   # the single always-on-top caption overlay
 
 
 def _noise_label(value: str) -> str:
@@ -79,6 +80,29 @@ def _with_model(model_name, fn):
         print(f"[!] Could not load the '{model_name}' model - see the message above.")
         return
     return fn(model)
+
+
+def _caption_geometry(cs):
+    """Pixel size/position of the caption overlay for the given caption settings."""
+    try:
+        scr = webview.screens[0]
+        sw, sh = scr.width, scr.height
+    except Exception:
+        sw, sh = 1920, 1080
+    width = max(300, int(sw * cs["width"] / 100))
+    height = int(cs["lines"]) * int(int(cs["size"]) * 1.45) + 34 + (int(int(cs["size"]) * 0.8) if cs["show_original"] else 0)
+    x = (sw - width) // 2
+    y = 30 if cs["position"] == "Top" else sh - height - 90
+    return x, y, width, height
+
+
+def _caption_close():
+    w, CAPTION["window"], CAPTION["sid"] = CAPTION["window"], None, None
+    if w:
+        try:
+            w.destroy()
+        except Exception:
+            pass
 
 
 class Api:
@@ -258,9 +282,52 @@ class Api:
         return LIVE[sid].clear()
 
     def live_close(self, sid):
+        if CAPTION["sid"] == sid:
+            _caption_close()
         s = LIVE.pop(sid, None)
         if s:
             s.close()
+        return True
+
+    # ---------------------------------------------------------------- Live captions overlay
+    def live_caption_set(self, sid, on, lang):
+        sess = LIVE[sid]
+        sess.caption_set(on, lang)
+        if on:
+            if CAPTION["sid"] != sid:
+                _caption_close()
+                x, y, w, h = _caption_geometry(sess.cs)
+                CAPTION["window"] = webview.create_window(
+                    "captions", url=str(WEB_DIR / "caption.html"), js_api=self, x=x, y=y, width=w, height=h,
+                    frameless=True, on_top=True, easy_drag=True, resizable=False, transparent=True,
+                    background_color="#000000")
+                CAPTION["sid"] = sid
+        elif CAPTION["sid"] == sid:
+            _caption_close()
+        return sess.caption_settings()
+
+    def live_caption_settings(self, sid, new=None):
+        sess = LIVE[sid]
+        res = sess.caption_settings(new)
+        if new and CAPTION["sid"] == sid and CAPTION["window"]:
+            x, y, w, h = _caption_geometry(sess.cs)
+            try:
+                CAPTION["window"].resize(w, h)
+                CAPTION["window"].move(x, y)
+            except Exception:
+                pass
+        return res
+
+    def caption_state_active(self):
+        sess = LIVE.get(CAPTION["sid"])
+        return sess.caption_state() if sess else {"on": False, "main": "", "sub": "", "alert": False,
+                                                  "settings": dict(live.CAPTION_DEFAULTS)}
+
+    def caption_hide(self):
+        sid = CAPTION["sid"]
+        if sid in LIVE:
+            LIVE[sid].caption_set(False)
+        _caption_close()
         return True
 
     def stop_watch_job(self, job_id):

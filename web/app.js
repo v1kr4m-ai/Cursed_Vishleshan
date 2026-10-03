@@ -86,6 +86,9 @@ function callApi(name, ...args) {
     return Promise.resolve({ events: ev, next: args[1] + ev.length, recording: false, finalizing: false,
       ready: true, busy: false, hasEntries: n >= 3, speaking: false, levels: { mic: 30 }, language: "English (100%)" });
   }
+  if (name === "live_caption_settings") return Promise.resolve({ opacity: 0.85, position: "Bottom", width: 70,
+    font: "Segoe UI", size: 22, lines: 2, fg: "#ffffff", bg: "#000000", show_original: false, no_bg: false,
+    speak: false, lang: "English (fast, offline)" });
   if (name === "get_model_progress") {
     const key = "m:" + args[0];
     const n = (_mockTicks[key] = (_mockTicks[key] || 0) + 1);
@@ -526,6 +529,23 @@ function addLivePanel(info) {
       <input type="text" class="select" data-t="alerts" placeholder="Alert words (comma separated)">
     </div>
     <div class="liverow">
+      <label class="checkrow"><input type="checkbox" data-t="capon"> Captions on screen</label>
+      <select class="select" data-t="caplang" style="max-width:240px;"></select>
+      <button class="ghostbtn tiny" data-a="capset">Caption settings</button>
+    </div>
+    <div class="liverow capsettings" data-t="capbox" style="display:none;">
+      <label class="small">Size <input type="number" min="10" max="72" data-c="size" class="select" style="width:70px;"></label>
+      <label class="small">Lines <input type="number" min="1" max="5" data-c="lines" class="select" style="width:60px;"></label>
+      <label class="small">Width % <input type="number" min="30" max="100" data-c="width" class="select" style="width:70px;"></label>
+      <label class="small">Opacity <input type="range" min="20" max="100" data-c="opacity"></label>
+      <label class="small">Position <select data-c="position" class="select" style="width:90px;"><option>Bottom</option><option>Top</option></select></label>
+      <label class="small">Text <input type="color" data-c="fg"></label>
+      <label class="small">Background <input type="color" data-c="bg"></label>
+      <label class="checkrow small"><input type="checkbox" data-c="show_original"> Show original words</label>
+      <label class="checkrow small"><input type="checkbox" data-c="no_bg"> No background</label>
+      <label class="checkrow small"><input type="checkbox" data-c="speak"> Read captions aloud</label>
+    </div>
+    <div class="liverow">
       <select class="select" data-t="target" style="max-width:180px;"></select>
       <button class="ghostbtn" data-a="translate" disabled>Translate</button>
       <button class="ghostbtn" data-a="read">Read aloud</button>
@@ -596,6 +616,29 @@ function addLivePanel(info) {
     setTimeout(tick, 400);
   };
   tick();
+
+  // ---- caption overlay (a second always-on-top window; it polls Python itself)
+  const CAP_LANGS = ["Original (as spoken)", "English (fast, offline)", ...targets.filter((x) => x !== "English")];
+  t("caplang").innerHTML = opt(CAP_LANGS);
+  const capNum = { size: 1, lines: 1, width: 1 };
+  callApi("live_caption_settings", sid, null).then((cs) => {
+    t("caplang").value = cs.lang;
+    wrap.querySelectorAll("[data-c]").forEach((el) => {
+      const k = el.dataset.c;
+      if (el.type === "checkbox") el.checked = !!cs[k];
+      else el.value = k === "opacity" ? Math.round(cs[k] * 100) : cs[k];
+    });
+  });
+  t("capon").addEventListener("change", () => callApi("live_caption_set", sid, t("capon").checked, t("caplang").value));
+  t("caplang").addEventListener("change", () => callApi("live_caption_set", sid, t("capon").checked, t("caplang").value));
+  a("capset").addEventListener("click", () => {
+    const b = t("capbox"); b.style.display = b.style.display === "none" ? "flex" : "none";
+  });
+  wrap.querySelectorAll("[data-c]").forEach((el) => el.addEventListener("input", () => {
+    const k = el.dataset.c;
+    const v = el.type === "checkbox" ? el.checked : k === "opacity" ? el.value / 100 : capNum[k] ? +el.value : el.value;
+    callApi("live_caption_settings", sid, { [k]: v });
+  }));
 
   a("rec").addEventListener("click", async () => {
     if (!recording) {

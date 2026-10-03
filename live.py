@@ -6,6 +6,8 @@ instead of touching widgets it appends events to a list that the web UI POLLS
 (never pushed - see app.py for why). One LiveSession per Live tab.
 """
 import datetime
+import queue
+import re
 import threading
 import time
 import wave
@@ -15,6 +17,12 @@ from pathlib import Path
 import video_summarizer as vs
 
 SR = vs.SR
+
+CAPTION_DEFAULTS = {"opacity": 0.85, "position": "Bottom", "width": 70, "font": "Segoe UI",
+                    "size": 22, "lines": 2, "fg": "#ffffff", "bg": "#000000",
+                    "show_original": False, "no_bg": False, "speak": False}
+CAP_ORIGINAL = "Original (as spoken)"
+CAP_FAST_EN = "English (fast, offline)"
 
 
 class LiveSession:
@@ -26,6 +34,12 @@ class LiveSession:
         self.src_name = {"mic": "Microphone", "system": "System audio", "call": "Call"}[source]
         self.events = []                       # polled by the page
         self._last_prov = {}
+        saved = vs.load_settings()
+        self.cs = dict(CAPTION_DEFAULTS)
+        self.cs.update({k: v for k, v in saved.get("captions", {}).items() if k in CAPTION_DEFAULTS})
+        self.cap = {"on": False, "lang": saved.get("caption_lang", CAP_FAST_EN), "done": [],
+                    "prov": {}, "orig": "", "last_who": None, "alert_until": 0.0}
+        self.cap_q, self.cap_llm = queue.Queue(), None
         self.lock, self.model_lock = threading.Lock(), threading.Lock()
         self.S = {"model": None, "recording": False, "entries": [], "finalize": False,
                   "closing": False, "busy": False, "translations": {}, "alerts": [],
@@ -39,6 +53,8 @@ class LiveSession:
 
     # ------------------------------------------------------------ setup
     def _emit(self, *ev):
+        if ev[0] == "prov":
+            self.cap["prov"][ev[1]] = (ev[2], ev[4])
         if ev[0] == "prov":   # skip repeats of the same provisional text for a channel
             if self._last_prov.get(ev[1]) == ev[2:4]:
                 return
@@ -96,6 +112,7 @@ class LiveSession:
             if not self.sys_devices:
                 self.sys_devices = [("(no PC sound device found)", None)]
         threading.Thread(target=self._worker, daemon=True).start()
+        threading.Thread(target=self._cap_worker, daemon=True).start()
 
     def devices(self):
         return {"mic": [n for n, _ in self.mic_devices], "sys": [n for n, _ in self.sys_devices],
@@ -166,15 +183,109 @@ class LiveSession:
         hits = [w for w in self.S["alert_words"] if w.lower() in low]
         if hits:
             self.S["alerts"].append({"t": t, "who": who, "words": hits, "text": text})
+            self.cap["alert_until"] = time.time() + 1.5
             self._emit("alert", hits, t, who, len(self.S["alerts"]))
 
-    def _commit(self, ch, segs, code):
+    def _commit(self, ch, segs, code, audio, upto):
         text = " ".join(s.text.strip() for s in segs)
         t = ch["offset"] + segs[0].start
         self.S["entries"].append({"t": t, "lang": code, "text": text, "who": ch["label"],
                                   "dur": max(segs[-1].end - segs[0].start, 0.5)})
         self._emit("commit", ch["key"], text, code, ch["label"], vs.lang_name(code))
         self._check_alerts(text, t, ch["label"])
+        self._caption_commit(ch, segs, code, audio, upto, text)
+
+    # ------------------------------------------------------------ captions
+    def _cap_add(self, text, who, original="", speak_lang=None):
+        cap = self.cap
+        if self.call and who and who != cap["last_who"]:
+            text = f"{who}: {text}"
+        cap["last_who"] = who
+        cap["done"].append(text)
+        cap["orig"] = original
+        if self.cs["speak"] and speak_lang:
+            self.player.say(re.sub(r"^(You|Them): ", "", text), speak_lang)
+
+    def _caption_commit(self, ch, segs, code, audio, upto, text):
+        cap = self.cap
+        if not cap["on"]:
+            return
+        cap["prov"].pop(ch["key"], None)
+        if cap["lang"] == CAP_ORIGINAL:
+            self._cap_add(text, ch["label"])
+        elif cap["lang"] == CAP_FAST_EN:
+            piece = audio[int(segs[0].start * SR): int(upto * SR)]
+            try:
+                with self.model_lock:
+                    tsegs, _ = self.S["model"].transcribe(piece, language=code, task="translate", beam_size=1,
+                                                          vad_filter=True, condition_on_previous_text=False)
+                    tr = " ".join(s.text.strip() for s in tsegs if s.text.strip())
+            except Exception:
+                tr = ""
+            self._cap_add(tr or text, ch["label"], text, "English")
+        else:
+            self.cap_q.put((text, cap["lang"], ch["label"]))
+
+    def _cap_worker(self):   # AI translation of captions into any language
+        while not self.S["closing"]:
+            try:
+                text, target, who = self.cap_q.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if self.cap_q.qsize() > 2:   # falling behind: merge what's waiting
+                more = [text]
+                while not self.cap_q.empty():
+                    more.append(self.cap_q.get_nowait()[0])
+                text = " ".join(more)
+            if self.cap_llm is None:
+                self.cap_llm = next(iter(vs.text_llms(self.online)), False)
+            if not self.cap_llm:
+                self._emit("speech", f"No AI translator for {target} captions (needs Claude Code, "
+                                     f"Ollama or LM Studio) - showing the original words")
+                self._cap_add(text, who)
+                continue
+            try:
+                tr = self.cap_llm[1]("You translate live subtitles. Output ONLY the translation, nothing else.",
+                                     f"Translate into {target}:\n{text}{vs.vocab_note()}")
+                self._cap_add(vs.strip_thinking(tr).strip(), who, text, target)
+            except Exception as e:
+                self._emit("speech", f"Caption translation failed: {str(e)[:80]}")
+                self._cap_add(text, who)
+
+    def caption_set(self, on, lang=None):
+        cap = self.cap
+        if lang and lang != cap["lang"]:
+            cap["lang"] = lang
+            cap["done"].clear()
+            self._save_caption_settings()
+        cap["on"] = bool(on)
+        return True
+
+    def caption_settings(self, new=None):
+        if new:
+            for k, v in new.items():
+                if k in CAPTION_DEFAULTS:
+                    self.cs[k] = v
+            self._save_caption_settings()
+        return dict(self.cs, lang=self.cap["lang"])
+
+    def _save_caption_settings(self):
+        s = vs.load_settings()
+        s.update(captions=dict(self.cs), caption_lang=self.cap["lang"])
+        vs.save_settings(s)
+
+    def caption_state(self):
+        cap = self.cap
+        main = " ".join(cap["done"][-40:])
+        if cap["lang"] == CAP_ORIGINAL:
+            provs = [f"{w}: {x}" if (self.call and w) else x for (x, w) in cap["prov"].values() if x]
+            main = (main + " " + " ".join(provs)).strip()
+        sub = cap["orig"] if self.cs["show_original"] and cap["lang"] != CAP_ORIGINAL else ""
+        return {"on": cap["on"], "main": main, "sub": sub, "settings": dict(self.cs),
+                "alert": time.time() < cap["alert_until"]}
+
+    def clear_captions(self):
+        self.cap.update(done=[], prov={}, last_who=None, orig="")
 
     def _process(self, ch, audio, final):
         np = self.np
@@ -204,15 +315,15 @@ class LiveSession:
             self._emit("prov", ch["key"], "", None, ch["label"])
             return
         if final or dur - segs[-1].end >= vs.LIVE_SILENCE_COMMIT_SEC:
-            self._commit(ch, segs, code)
+            self._commit(ch, segs, code, audio, dur)
             self._cut(ch, dur)
             self._emit("prov", ch["key"], "", code, ch["label"])
         elif (dur >= vs.LIVE_COMMIT_SEC or dur >= vs.LIVE_MAX_PENDING_SEC) and len(segs) > 1:
-            self._commit(ch, segs[:-1], code)
+            self._commit(ch, segs[:-1], code, audio, segs[-2].end)
             self._cut(ch, segs[-2].end)
             self._emit("prov", ch["key"], segs[-1].text.strip(), code, ch["label"])
         elif dur >= vs.LIVE_MAX_PENDING_SEC:
-            self._commit(ch, segs, code)
+            self._commit(ch, segs, code, audio, segs[-1].end)
             self._cut(ch, segs[-1].end)
             self._emit("prov", ch["key"], "", code, ch["label"])
         else:
@@ -429,6 +540,7 @@ class LiveSession:
                 ch.update(all=[], parts=[], offset=0.0, last_len=0, received=0,
                           pending=np.zeros(0, np.float32))
             S.update(entries=[], translations={}, alerts=[])
+        self.clear_captions()
         return True
 
     def close(self):
