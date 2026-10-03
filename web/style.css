@@ -284,3 +284,97 @@ html, body {
   .sourcegrid { grid-template-columns: repeat(2, 1fr); }
   .historysplit { grid-template-columns: 1fr; }
 }
+
+/* ======================================================================
+   Round 2: tool tabs, compact stat cards, card-deck selector, offline page
+   ====================================================================== */
+.pillnav { flex-wrap: nowrap; max-width: 62vw; overflow-x: auto; scrollbar-width: none; }
+.pillnav::-webkit-scrollbar { display: none; }
+.tooltabs { display: contents; }
+.pill.tool { display: inline-flex; align-items: center; gap: 8px; max-width: 220px; }
+.pill.tool .t { overflow: hidden; text-overflow: ellipsis; }
+.pill.tool .x { font-style: normal; opacity: .55; padding: 0 2px; border-radius: 50%; }
+.pill.tool .x:hover { opacity: 1; background: rgba(255,255,255,.2); }
+.pill.tool:not(.active) .x:hover { background: rgba(0,0,0,.08); }
+.pill.tool .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+.pill.tool.done .dot { background: #1e8e3e; }
+.toolview { padding-top: 4px; }
+.toolview .livepanel, .toolview .joblog { margin: 0 0 16px; }
+
+.statrow { grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 12px; margin-bottom: 18px; }
+.statcard { padding: 10px 14px; border-radius: 14px; }
+.statnum { font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.statlabel { font-size: 11px; margin-top: 1px; }
+.statcard.clickable { cursor: pointer; transition: transform .12s, box-shadow .12s; }
+.statcard.clickable:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
+
+.maincol.one { grid-template-columns: 1fr; }
+.deckhost { position: relative; width: 100%; height: 118px; }
+
+/* ---- card deck: a stack that fans out on hover and opens on click ---- */
+.deck { position: absolute; top: 0; left: 0; right: 0; z-index: 6; }
+.deck::before, .deck::after {
+  content: ""; position: absolute; left: 0; right: 0; height: 82px; border-radius: var(--radius);
+  background: #2a2d35; z-index: -1; transition: opacity .25s, transform .25s;
+}
+.deck::before { top: 12px; transform: scale(.95); opacity: .75; }
+.deck::after { top: 24px; transform: scale(.9); opacity: .5; }
+.deck:hover::before, .deck:hover::after, .deck.open::before, .deck.open::after { opacity: 0; transform: scale(1); }
+.deck-card {
+  background: var(--dark); color: #fff; border-radius: var(--radius); padding: 16px 18px 12px;
+  height: 82px; overflow: hidden; cursor: pointer; display: flex; flex-direction: column;
+  box-shadow: var(--shadow); transition: height .3s ease;
+}
+.deck:hover:not(.open) .deck-card { height: 340px; }
+.deck.open .deck-card { height: 540px; cursor: default; }
+.deck-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex: none; }
+.deck-head h2 { margin: 0; font-size: 14px; color: #fff; }
+.deck-count { font-size: 17px; font-weight: 700; }
+.deck-sub { font-size: 12px; color: #9aa0ab; margin: 2px 0 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
+.deck:hover .deck-list, .deck.open .deck-list { visibility: visible; }
+.deck-tools { display: none; gap: 6px; align-items: center; }
+.deck.open .deck-tools { display: flex; }
+.deck-list { visibility: hidden; overflow-y: auto; flex: 1; margin-right: -6px; padding-right: 6px; scrollbar-width: thin; scrollbar-color: #444 transparent; }
+
+.deck .modelrow { padding: 8px 6px; }
+.deck .modelrow-text { overflow: hidden; }
+.deck .modelrow-size { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rowactions { display: none; align-items: center; gap: 2px; margin-right: 8px; }
+.deck.open .rowactions { display: flex; }
+.ic {
+  width: 26px; height: 26px; border: none; border-radius: 8px; background: transparent; color: #aab0bb;
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
+}
+.ic:hover { background: rgba(255,255,255,.12); color: #fff; }
+.ic.warn:hover { background: rgba(217,48,37,.25); color: #ff8a80; }
+.ic svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ic.spin svg { animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.modelrow-tag { font-size: 10.5px; color: #9aa0ab; margin-left: 6px; }
+.modelrow-tag.warn { color: #f5c344; }
+.deck .modelicon { width: 30px; height: 30px; font-size: 11px; }
+.deck .statuscircle { width: 22px; height: 22px; font-size: 10px; }
+
+/* ---- Offline settings ---- */
+.offgrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+.offgrid label.small { display: block; margin: 10px 0 4px; }
+.offgrid .select { margin-bottom: 2px; }
+.enginelist { display: flex; flex-direction: column; gap: 8px; }
+.engine { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: #f6f7f9; border-radius: 14px; }
+.engine .n { width: 22px; height: 22px; border-radius: 50%; background: var(--dark); color: #fff; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.engine.off { opacity: .55; }
+.engine .name { font-weight: 600; font-size: 13.5px; flex: 1; }
+.engine .hint { font-size: 11.5px; color: var(--muted); font-weight: 400; margin-left: 8px; }
+.engine .ic { color: #6a6f78; background: #eceef1; }
+.engine .ic:hover { background: #dfe2e7; color: #16181d; }
+
+/* ---- Voice cleanup: smaller tool controls ---- */
+#view-cleanup .card { padding: 16px 18px; }
+#view-cleanup .pickrow { margin: 6px 0; }
+#view-cleanup .ghostbtn { font-size: 12px; padding: 7px 13px; }
+#view-cleanup .startbtn.small { padding: 8px 16px; font-size: 13px; }
+
+@media (max-width: 980px) {
+  .offgrid { grid-template-columns: 1fr; }
+  .pillnav { max-width: 100%; }
+}

@@ -14,10 +14,11 @@
       <button class="pill" data-tab="cleanup">Voice Cleanup</button>
       <button class="pill" data-tab="offline">Offline Settings</button>
       <button class="pill" data-tab="history">History</button>
+      <span class="tooltabs" id="toolTabs"></span>
     </nav>
     <div class="icons">
       <span class="netdot" id="netDot"></span>
-      <label class="onlineswitch">
+      <label class="onlineswitch" title="Which tools are preferred by default">
         <input type="checkbox" id="onlineToggle">
         <span class="track"><span class="thumb"></span></span>
       </label>
@@ -28,23 +29,15 @@
   <main id="view-home" class="view active">
     <h1 class="welcome">Welcome back</h1>
 
-    <section class="statrow">
-      <div class="statcard">
-        <div class="statnum" id="statModels">-</div>
-        <div class="statlabel">Models downloaded</div>
-      </div>
-      <div class="statcard">
-        <div class="statnum" id="statGpu">-</div>
-        <div class="statlabel">Transcription device</div>
-      </div>
-      <div class="statcard">
-        <div class="statnum" id="statHistory">-</div>
-        <div class="statlabel">Items processed</div>
-      </div>
-      <div class="statcard accent">
-        <div class="statnum" id="statOnline">-</div>
-        <div class="statlabel">Tool preference</div>
-      </div>
+    <section class="statrow" id="statRow">
+      <div class="statcard"><div class="statnum" id="statModels">-</div><div class="statlabel">Models downloaded</div></div>
+      <div class="statcard"><div class="statnum" id="statGpu">-</div><div class="statlabel">Device</div></div>
+      <div class="statcard clickable" id="statHistoryCard" title="Open History">
+        <div class="statnum" id="statHistory">-</div><div class="statlabel">Processed &middot; open history</div></div>
+      <div class="statcard clickable" id="statModelCard" title="Choose the model">
+        <div class="statnum" id="statModel">-</div><div class="statlabel">Model in use</div></div>
+      <div class="statcard clickable" id="statCleanCard" title="Open Voice Cleanup">
+        <div class="statnum" id="statClean">-</div><div class="statlabel">Voice cleanup</div></div>
     </section>
 
     <section class="dashgrid">
@@ -52,13 +45,14 @@
         <div class="card">
           <h2>Spoken language</h2>
           <select id="spokenSelect" class="select"></select>
-          <p class="muted small">Auto-detect handles mixed languages.</p>
+          <p class="muted small">The language in the recording. Auto-detect also handles mixed languages.</p>
         </div>
 
         <div class="card">
           <h2>Output languages</h2>
+          <p class="muted small" style="margin:-6px 0 10px;">For every language ticked you get a translated transcript and a summary in it. <b>Original</b> keeps the language as spoken.</p>
           <div id="outputChecks" class="checklist"></div>
-          <label class="checkrow"><input type="checkbox" id="speakSave"> Also save as spoken audio</label>
+          <label class="checkrow"><input type="checkbox" id="speakSave"> Also save each translation as spoken audio</label>
         </div>
 
         <div class="card full">
@@ -71,79 +65,99 @@
             <label class="checkrow"><input type="checkbox" id="skipDone"> Folders: skip already done</label>
             <label class="checkrow"><input type="checkbox" id="subfolders"> Include subfolders</label>
           </div>
-        </div>
-
-        <div class="card dark full">
-          <h2>Voice cleanup</h2>
-          <p class="bignum" id="noiseSummary">Off</p>
-          <p class="muted small">Change this under the Voice Cleanup tab - it applies everywhere.</p>
-        </div>
-      </div>
-
-      <div class="sidecol">
-        <div class="card dark modelscard">
-          <div class="modelscard-head">
-            <h2>Speech-to-text model</h2>
-            <span class="modelscount" id="modelsCount"></span>
+          <div class="rowflex" style="margin-top:14px;">
+            <button id="startBtn" class="startbtn small">Start&ensp;&#9654;</button>
+            <span class="muted small">Each run opens in its own tab at the top, so you can switch back and forth.</span>
           </div>
-          <div class="modellist" id="modelGrid"></div>
         </div>
       </div>
-    </section>
 
-    <button id="startBtn" class="startbtn">Start&ensp;&#9654;</button>
-    <div class="joblogs" id="livePanels"></div>
-    <div class="joblogs" id="jobPanels"></div>
+      <div class="sidecol"><div id="modelDeck" class="deckhost"></div></div>
+    </section>
   </main>
 
   <main id="view-cleanup" class="view">
     <h1 class="welcome">Voice Cleanup</h1>
     <p class="muted" style="margin:-12px 0 20px;">Used automatically by every feature - live capture, file, folder, URL, watch.</p>
-    <div class="card full" style="margin-bottom:16px;">
-      <h2>Mode</h2>
-      <div class="sourcegrid" id="noiseGrid"></div>
-      <p class="muted small" id="noiseHelp"></p>
-      <div class="rowflex" id="keyRow" style="display:none; margin-top:10px;">
-        <input type="password" id="keyInput" class="select" style="max-width:280px;" placeholder="ElevenLabs API key">
-        <button class="ghostbtn" id="saveKeyBtn">Save key</button>
-        <span class="muted small" id="keyStatus"></span>
+    <section class="dashgrid">
+      <div class="maincol one">
+        <div class="card">
+          <h2>Options</h2>
+          <p class="muted small" id="noiseHelp" style="margin-top:0;"></p>
+          <div class="rowflex" id="keyRow" style="display:none; margin:10px 0;">
+            <input type="password" id="keyInput" class="select" style="max-width:280px;" placeholder="ElevenLabs API key">
+            <button class="ghostbtn" id="saveKeyBtn">Save key</button>
+            <span class="muted small" id="keyStatus"></span>
+          </div>
+          <label class="checkrow"><input type="checkbox" id="keepCleanChk"> Also save the cleaned voice (to listen to)</label>
+        </div>
+        <div class="card">
+          <h2>Clean up a file</h2>
+          <p class="muted small" style="margin-top:0;">Audio or video in; the cleaned audio is saved as a .wav using the mode on the right.</p>
+          <div id="cuTool"></div>
+        </div>
+        <div class="card">
+          <h2>Extract background music</h2>
+          <p class="muted small" style="margin-top:0;">Removes the vocals from a song and saves the instrumental as a stereo .wav (Demucs, offline).</p>
+          <div id="muTool"></div>
+        </div>
       </div>
-      <label class="checkrow" style="margin-top:12px;">
-        <input type="checkbox" id="keepCleanChk"> Also save the cleaned voice (to listen to)
-      </label>
-    </div>
-
-    <div class="card full" style="margin-bottom:16px;">
-      <h2>Clean up a file</h2>
-      <p class="muted small">Pick an audio or video file - its audio is cleaned using the Mode above and saved as a .wav.</p>
-      <div id="cuTool"></div>
-    </div>
-
-    <div class="card full">
-      <h2>Extract background music from a song</h2>
-      <p class="muted small">Pick a song or video - the instrumental (vocals removed) is saved as a stereo .wav via Demucs (Offline).</p>
-      <div id="muTool"></div>
-    </div>
+      <div class="sidecol"><div id="noiseDeck" class="deckhost"></div></div>
+    </section>
   </main>
 
   <main id="view-offline" class="view">
     <h1 class="welcome">Offline Settings</h1>
-    <p class="muted" style="margin:-12px 0 20px;">Pick which installed model Ollama / LM Studio uses for summaries and translations.</p>
+    <p class="muted" style="margin:-12px 0 20px;">How summaries and translations are produced - which engines run, in what order, and how they are tuned.</p>
+
     <div class="card full" style="margin-bottom:16px;">
-      <h2>Ollama</h2>
-      <div class="rowflex">
-        <select id="ollamaSelect" class="select" style="max-width:360px;"></select>
-        <button class="ghostbtn" id="ollamaRefresh">Refresh list</button>
-      </div>
-      <p class="muted small" id="ollamaStatus"></p>
+      <h2>Engine priority</h2>
+      <p class="muted small" style="margin-top:0;">The first enabled engine that works is used; the next one is the fallback. Claude Code needs internet.</p>
+      <div id="engineList" class="enginelist"></div>
     </div>
-    <div class="card full">
-      <h2>LM Studio</h2>
-      <div class="rowflex">
-        <select id="lmstudioSelect" class="select" style="max-width:360px;"></select>
-        <button class="ghostbtn" id="lmstudioRefresh">Refresh list</button>
+
+    <div class="offgrid">
+      <div class="card">
+        <h2>Ollama</h2>
+        <label class="small muted">Server address</label>
+        <input type="text" id="ollamaUrl" class="select">
+        <label class="small muted">Model</label>
+        <div class="rowflex"><select id="ollamaSelect" class="select" style="flex:1;"></select>
+          <button class="ghostbtn" id="ollamaRefresh">Refresh</button></div>
+        <label class="small muted">Context window (tokens) - lower it if you run out of memory</label>
+        <input type="number" id="ollamaCtx" class="select" min="2048" step="1024">
+        <p class="muted small" id="ollamaStatus"></p>
       </div>
-      <p class="muted small" id="lmstudioStatus"></p>
+
+      <div class="card">
+        <h2>LM Studio</h2>
+        <label class="small muted">Server address</label>
+        <input type="text" id="lmstudioUrl" class="select">
+        <label class="small muted">Model</label>
+        <div class="rowflex"><select id="lmstudioSelect" class="select" style="flex:1;"></select>
+          <button class="ghostbtn" id="lmstudioRefresh">Refresh</button></div>
+        <p class="muted small" id="lmstudioStatus"></p>
+        <p class="muted small">LM Studio: Developer tab &rarr; Start server.</p>
+      </div>
+
+      <div class="card">
+        <h2>Pictures in summaries</h2>
+        <label class="checkrow"><input type="checkbox" id="sendFrames"> Send video frames to the local model</label>
+        <p class="muted small">Only for vision models (e.g. gemma3, qwen2.5vl, llava). Text-only models fail with frames.</p>
+        <label class="small muted">Frames per video</label>
+        <input type="number" id="maxFrames" class="select" min="1" max="20">
+      </div>
+
+      <div class="card">
+        <h2>Limits</h2>
+        <label class="small muted">Give up on one model call after (minutes)</label>
+        <input type="number" id="timeoutMin" class="select" min="1" max="240">
+        <label class="small muted">Summary: characters per part (long transcripts are split)</label>
+        <input type="number" id="chunkChars" class="select" min="2000" step="1000">
+        <label class="small muted">Translation: characters per part</label>
+        <input type="number" id="translateChunk" class="select" min="1000" step="500">
+        <p class="muted small">Smaller parts help small-context models; larger parts are faster.</p>
+      </div>
     </div>
   </main>
 

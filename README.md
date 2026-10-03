@@ -59,7 +59,9 @@ Record/Stop, input level meters, device pickers, committed text vs. provisional 
 
 ### Settings and quality-of-life
 - **Online / Offline preference toggle:** sets which tools are preferred by default (Claude/ElevenLabs/edge-tts vs. Ollama/LM Studio/local cleanup). It never disables an option; an internet-status light shows real connectivity separately.
-- **Offline Settings:** choose exactly which installed **Ollama** and **LM Studio** model is used for summaries and translations.
+- **Offline Settings:** set the **engine priority** (Claude Code / Ollama / LM Studio - enable, disable and reorder; the first working one is used), each server's address and model, Ollama's context window, whether video frames are sent to vision models (and how many), the per-call timeout, and the chunk sizes used for long summaries and translations.
+- **Model management:** the Whisper model list is a card deck (hover to peek, click to open). Each model has icons to open its folder, re-check it, delete it, or delete and download it again; models with an interrupted download are tagged *incomplete*.
+- **One tab per tool run:** every file / folder / link / watch / live / cleanup / music run opens its own tab in the top bar, so you can switch between running tools without scrolling. Closing a tab closes a live session or stops a watch job.
 - **History:** searchable list of everything processed (titles, languages, and the full text of transcripts and summaries), with preview, open file, show in folder and remove.
 - Read-aloud/text-to-speech: Microsoft neural voices when online (edge-tts), built-in Windows voices offline.
 - Keeps Windows awake during long batch jobs.

@@ -18,7 +18,7 @@ const MOCK_HOME = {
   models: [
     { name: "tiny", size: "~75 MB", desc: "Fastest, lowest accuracy", downloaded: true },
     { name: "base", size: "~145 MB", desc: "Very fast, basic accuracy", downloaded: true },
-    { name: "small", size: "~485 MB", desc: "Good balance of speed and accuracy", downloaded: true },
+    { name: "small", size: "~485 MB", desc: "Good balance of speed and accuracy", downloaded: false, onDisk: true, diskMB: 261 },
     { name: "medium", size: "~1.5 GB", desc: "More accurate, slower", downloaded: false },
     { name: "large-v3-turbo", size: "~1.6 GB", desc: "Near-best accuracy, fast", downloaded: false },
     { name: "large-v3", size: "~3.1 GB", desc: "Best accuracy, slowest", downloaded: false },
@@ -51,6 +51,9 @@ const MOCK_CLEANUP = {
   noise: "studio", keepClean: false, hasKey: false,
 };
 const MOCK_OFFLINE = {
+  options: { backend_order: ["ollama", "claude"], ollama_url: "http://localhost:11434", lmstudio_url: "http://localhost:1234",
+    ollama_num_ctx: 16384, send_frames: false, max_frames: 6, timeout_min: 30, chunk_chars: 12000, translate_chunk_chars: 4000 },
+  claudeFound: true,
   ollamaModels: ["phi4:latest", "llama3.2:latest", "qwen2.5:7b"], ollamaErr: null, ollamaPicked: "phi4:latest",
   lmstudioModels: [], lmstudioErr: "LM Studio server not running.", lmstudioPicked: "",
 };
@@ -61,6 +64,7 @@ const MOCK_HISTORY = [
 ];
 
 const _mockTicks = {};
+const _mockDone = new Set(), _mockGone = new Set();
 
 function callApi(name, ...args) {
   if (window.pywebview && window.pywebview.api && window.pywebview.api[name]) {
@@ -89,6 +93,13 @@ function callApi(name, ...args) {
   if (name === "live_caption_settings") return Promise.resolve({ opacity: 0.85, position: "Bottom", width: 70,
     font: "Segoe UI", size: 22, lines: 2, fg: "#ffffff", bg: "#000000", show_original: false, no_bg: false,
     speak: false, lang: "English (fast, offline)" });
+  if (name === "get_models") return Promise.resolve(MOCK_HOME.models.map((m) => {
+    const ok = (m.downloaded && !_mockGone.has(m.name)) || _mockDone.has(m.name);
+    return { ...m, downloaded: ok, onDisk: ok || m.onDisk, diskMB: ok ? 300 : m.diskMB };
+  }));
+  if (name === "download_model" || name === "model_redownload") { _mockDone.add(args[0]); _mockGone.delete(args[0]); return Promise.resolve(true); }
+  if (name === "model_delete") { _mockGone.add(args[0]); _mockDone.delete(args[0]); return Promise.resolve({ ok: true }); }
+  if (name === "model_open_folder") return Promise.resolve({ ok: true });
   if (name === "get_model_progress") {
     const key = "m:" + args[0];
     const n = (_mockTicks[key] = (_mockTicks[key] || 0) + 1);
@@ -116,49 +127,176 @@ function toast(msg) {
   toast._h = setTimeout(() => t.classList.remove("show"), 2600);
 }
 
-function renderModels() {
-  const list = document.getElementById("modelGrid");
-  list.innerHTML = "";
-  for (const m of state.models) {
-    const selected = m.name === state.selectedModel;
-    const pct = m._progress || 0;
-    const row = document.createElement("div");
-    row.className = "modelrow" + (selected ? " selected-row" : "");
-    row.title = m.desc;
-    let status;
-    if (m._downloading) status = `<span class="statuscircle downloading">${pct}%</span>`;
-    else if (selected) status = `<span class="statuscircle selected">&#10003;</span>`;
-    else if (m.downloaded) status = `<span class="statuscircle downloaded">&#10003;</span>`;
-    else status = `<span class="statuscircle"></span>`;
-    row.innerHTML = `
-      <div class="modelrow-left">
-        <span class="modelicon">${m.name.slice(0, 2)}</span>
-        <div class="modelrow-text">
-          <div class="modelrow-name">${m.name}</div>
-          <div class="modelrow-size">${m.size}</div>
+// ---------------------------------------------------------------- card deck
+// A stack of cards: hover fans it out into a scrollable list, click pins it open for choosing.
+const ICONS = {
+  folder: '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+  refresh: '<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>',
+  redownload: '<svg viewBox="0 0 24 24"><path d="M12 4v11"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/></svg>',
+  trash: '<svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/></svg>',
+  up: '<svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg>',
+  down: '<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>',
+};
+
+function createDeck(host, o) {
+  host.innerHTML = `<div class="deck"><div class="deck-card">
+      <div class="deck-head"><h2>${o.title}</h2>
+        <span class="deck-tools" data-t="tools"></span><span class="deck-count" data-t="count"></span></div>
+      <div class="deck-sub" data-t="sub"></div>
+      <div class="deck-list" data-t="list"></div></div></div>`;
+  const deck = host.querySelector(".deck");
+  const q = (n) => host.querySelector(`[data-t="${n}"]`);
+  const isOpen = () => deck.classList.contains("open");
+  const setOpen = (v) => deck.classList.toggle("open", v);
+
+  host.querySelector(".deck-card").addEventListener("click", () => { if (!isOpen()) setOpen(true); });
+  host.querySelector(".deck-head").addEventListener("click", (e) => {
+    if (isOpen() && !e.target.closest(".ic")) setOpen(false);
+  });
+  document.addEventListener("click", (e) => { if (isOpen() && !deck.contains(e.target)) setOpen(false); });
+
+  (o.tools || []).forEach((t) => {
+    const b = document.createElement("button");
+    b.className = "ic"; b.title = t.title; b.innerHTML = ICONS[t.icon];
+    b.addEventListener("click", (e) => { e.stopPropagation(); t.run(b); });
+    q("tools").appendChild(b);
+  });
+
+  function render() {
+    const items = o.items();
+    q("count").textContent = o.count ? o.count() : "";
+    q("sub").textContent = o.sub ? o.sub() : "";
+    const list = q("list");
+    const scroll = list.scrollTop;
+    list.innerHTML = "";
+    for (const it of items) {
+      const row = document.createElement("div");
+      row.className = "modelrow" + (it.selected ? " selected-row" : "");
+      if (it.title) row.title = it.title;
+      const status = it.pct != null ? `<span class="statuscircle downloading">${it.pct}%</span>`
+        : it.selected ? `<span class="statuscircle selected">&#10003;</span>`
+        : it.ready ? `<span class="statuscircle downloaded">&#10003;</span>` : `<span class="statuscircle"></span>`;
+      row.innerHTML = `
+        <div class="modelrow-left">
+          <span class="modelicon">${it.badge}</span>
+          <div class="modelrow-text">
+            <div class="modelrow-name">${it.name}${it.tag ? `<span class="modelrow-tag ${it.tagWarn ? "warn" : ""}">${it.tag}</span>` : ""}</div>
+            <div class="modelrow-size">${it.sub || ""}</div>
+          </div>
         </div>
-      </div>
-      ${status}`;
-    row.addEventListener("click", () => onModelClick(m));
-    list.appendChild(row);
+        <span class="rowactions"></span>${status}`;
+      const acts = row.querySelector(".rowactions");
+      (it.actions || []).forEach((a) => {
+        const b = document.createElement("button");
+        b.className = "ic " + (a.cls || ""); b.title = a.title; b.innerHTML = ICONS[a.icon];
+        b.addEventListener("click", (e) => { e.stopPropagation(); o.onAction(it.id, a.id, b); });
+        acts.appendChild(b);
+      });
+      row.addEventListener("click", () => { if (isOpen()) o.onSelect(it.id); });
+      list.appendChild(row);
+    }
+    list.scrollTop = scroll;
   }
-  document.getElementById("modelsCount").textContent =
-    state.models.filter((m) => m.downloaded).length + "/" + state.models.length;
+  return { deck, render, open: () => setOpen(true), close: () => setOpen(false) };
+}
+
+// ---------------------------------------------------------------- Whisper model deck (Home)
+let modelDeck = null;
+
+// the selected model only counts when it is fully downloaded
+function activeModel() {
+  const m = state.models.find((x) => x.name === state.selectedModel);
+  return m && m.downloaded ? m.name : null;
+}
+
+function renderModels() {
+  if (!modelDeck) {
+    modelDeck = createDeck(document.getElementById("modelDeck"), {
+      title: "Speech-to-text model",
+      tools: [{ icon: "refresh", title: "Re-check all models on disk", run: refreshModels }],
+      count: () => state.models.filter((m) => m.downloaded).length + "/" + state.models.length,
+      sub: () => activeModel() ? `In use: ${activeModel()}` : "No usable model - open and pick or download one",
+      items: () => state.models.map((m) => {
+        const incomplete = m.onDisk && !m.downloaded && !m._downloading;
+        const actions = [{ id: "refresh", icon: "refresh", title: "Re-check this model" }];
+        if (m.onDisk) actions.unshift({ id: "folder", icon: "folder", title: "Open the model's folder" });
+        if (m.onDisk || m.downloaded) actions.push({ id: "redownload", icon: "redownload", title: "Delete and download again" });
+        if (m.onDisk) actions.push({ id: "delete", icon: "trash", title: "Delete this model from disk", cls: "warn" });
+        return {
+          id: m.name, badge: m.name.slice(0, 2), name: m.name, title: m.desc,
+          tag: incomplete ? "incomplete" : "", tagWarn: incomplete,
+          sub: m.size + (m.diskMB ? ` · ${m.diskMB} MB on disk` : ""),
+          selected: m.name === state.selectedModel && m.downloaded,
+          ready: m.downloaded, pct: m._downloading ? (m._progress || 0) : null, actions,
+        };
+      }),
+      onSelect: (name) => onModelClick(state.models.find((m) => m.name === name)),
+      onAction: (name, act, btn) => onModelAction(state.models.find((m) => m.name === name), act, btn),
+    });
+  }
+  modelDeck.render();
 }
 
 function onModelClick(m) {
   if (m.downloaded) {
     state.selectedModel = m.name;
-    renderModels();
-    persistHome();
+    renderModels(); renderStats(); persistHome();
     return;
   }
   if (m._downloading) return;
-  m._downloading = true;
+  startModelDownload(m, m.onDisk ? "Finishing" : "Downloading");
+}
+
+function startModelDownload(m, verb) {
+  m._downloading = true; m._progress = 0;
   renderModels();
-  toast(`Downloading ${m.name}...`);
-  callApi("download_model", m.name);
+  toast(`${verb} ${m.name}...`);
   pollModelProgress(m);
+}
+
+async function refreshModels(btn) {
+  if (btn) btn.classList.add("spin");
+  const fresh = await callApi("get_models");
+  for (const f of fresh) {
+    const m = state.models.find((x) => x.name === f.name);
+    if (m) Object.assign(m, f);
+  }
+  if (!state.models.some((m) => m.name === state.selectedModel && m.downloaded)) {
+    const first = state.models.find((m) => m.downloaded);
+    state.selectedModel = first ? first.name : null;
+    persistHome();
+  }
+  if (btn) btn.classList.remove("spin");
+  renderModels(); renderStats();
+  toast("Model list refreshed");
+}
+
+async function onModelAction(m, act, btn) {
+  if (act === "refresh") return refreshModels(btn);
+  if (act === "folder") {
+    const r = await callApi("model_open_folder", m.name);
+    if (!r.ok) toast(r.message);
+    return;
+  }
+  if (act === "delete") {
+    if (!confirm(`Delete the '${m.name}' model from disk?\n\nIt will have to be downloaded again to use it.`)) return;
+    await callApi("model_delete", m.name);
+    Object.assign(m, { downloaded: false, onDisk: false, diskMB: 0, _downloading: false });
+    if (state.selectedModel === m.name) {
+      const first = state.models.find((x) => x.downloaded);
+      state.selectedModel = first ? first.name : null;
+      persistHome();
+    }
+    renderModels(); renderStats();
+    toast(`${m.name} deleted`);
+    return;
+  }
+  if (act === "redownload") {
+    if (!confirm(`Delete '${m.name}' and download it again?`)) return;
+    Object.assign(m, { downloaded: false, onDisk: false, diskMB: 0 });
+    await callApi("model_redownload", m.name);
+    startModelDownload(m, "Re-downloading");
+  }
 }
 
 // Polling, not a push from Python: window.evaluate_js() called from a background
@@ -174,15 +312,17 @@ function pollModelProgress(m) {
       return;
     }
     m._progress = p.pct;
-    renderModels();
     if (p.done) {
-      m.downloaded = true;
       m._downloading = false;
-      state.selectedModel = m.name;
-      toast(`${m.name} downloaded`);
-      renderModels();
+      await refreshModels();
+      const fresh = state.models.find((x) => x.name === m.name);
+      if (fresh && fresh.downloaded) {
+        state.selectedModel = m.name; persistHome(); renderModels(); renderStats();
+        toast(`${m.name} downloaded`);
+      }
       return;
     }
+    renderModels();
     setTimeout(tick, 500);
   };
   tick();
@@ -227,28 +367,40 @@ function renderSources() {
   document.getElementById("subfolders").checked = state.subfolders;
 }
 
+function shortClean(label) {
+  return (label || "Off").replace(/ \((Offline|Online)\)$/, "").replace(/ - .*/, "");
+}
+
 function renderStats() {
   document.getElementById("statModels").textContent =
     state.models.filter((m) => m.downloaded).length + " / " + state.models.length;
-  document.getElementById("statGpu").textContent = state.gpu === "cuda" ? "GPU (CUDA)" : "CPU";
+  document.getElementById("statGpu").textContent = state.gpu === "cuda" ? "GPU · CUDA" : "CPU";
   document.getElementById("statHistory").textContent = state.historyCount;
-  document.getElementById("statOnline").textContent = state.onlinePref ? "Online" : "Offline";
-  document.getElementById("noiseSummary").textContent = state.noiseLabel;
+  document.getElementById("statModel").textContent = activeModel() || "none";
+  document.getElementById("statClean").textContent = shortClean(state.noiseLabel);
 
   const dot = document.getElementById("netDot");
   dot.classList.toggle("ok", !!state.onlineReal);
   dot.title = state.onlineReal ? "Internet connected" : "Offline";
-
-  const toggle = document.getElementById("onlineToggle");
-  toggle.checked = !!state.onlinePref;
+  document.getElementById("onlineToggle").checked = !!state.onlinePref;
   document.getElementById("onlineLabel").textContent =
     state.onlinePref ? "Prefers online tools" : "Prefers offline tools";
+}
+
+function wireStats() {
+  const toggle = document.getElementById("onlineToggle");
   toggle.addEventListener("change", () => {
     state.onlinePref = toggle.checked;
     document.getElementById("onlineLabel").textContent =
       state.onlinePref ? "Prefers online tools" : "Prefers offline tools";
-    document.getElementById("statOnline").textContent = state.onlinePref ? "Online" : "Offline";
     callApi("set_online", state.onlinePref);
+  });
+  document.getElementById("statHistoryCard").addEventListener("click", () => activateTab("history"));
+  document.getElementById("statCleanCard").addEventListener("click", () => activateTab("cleanup"));
+  document.getElementById("statModelCard").addEventListener("click", (e) => {
+    e.stopPropagation();
+    document.getElementById("modelDeck").scrollIntoView({ behavior: "smooth", block: "center" });
+    if (modelDeck) modelDeck.open();
   });
 }
 
@@ -264,21 +416,63 @@ function persistHome() {
   });
 }
 
+// ---------------------------------------------------------------- tabs (fixed + one per running tool)
 const TAB_LOADERS = { cleanup: loadCleanupTab, offline: loadOfflineTab, history: () => loadHistoryTab() };
+const TOOL_TABS = {};
+let toolSeq = 0;
+
+function activateTab(id) {
+  document.querySelectorAll("#pillnav .pill").forEach((b) => b.classList.toggle("active", b.dataset.tab === id));
+  document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + id));
+  if (TAB_LOADERS[id]) TAB_LOADERS[id]();
+  window.scrollTo(0, 0);
+}
 
 function wireNav() {
-  document.querySelectorAll(".pill").forEach((btn) => btn.addEventListener("click", () => {
-    document.querySelectorAll(".pill").forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
-    document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
-    document.getElementById("view-" + btn.dataset.tab).classList.add("active");
-    if (TAB_LOADERS[btn.dataset.tab]) TAB_LOADERS[btn.dataset.tab]();
-  }));
+  document.getElementById("pillnav").addEventListener("click", (e) => {
+    const pill = e.target.closest(".pill");
+    if (!pill) return;
+    if (e.target.closest(".x")) closeToolTab(pill.dataset.tab);
+    else activateTab(pill.dataset.tab);
+  });
+}
+
+// Every tool run (file / folder / link / watch / live / cleanup / music) opens its own tab up
+// in the nav bar, so it can be switched to without scrolling.
+function openToolTab(title) {
+  const id = "tool" + (++toolSeq);
+  const pill = document.createElement("button");
+  pill.className = "pill tool"; pill.dataset.tab = id;
+  pill.innerHTML = '<span class="dot"></span><span class="t"></span><i class="x" title="Close tab">&times;</i>';
+  pill.querySelector(".t").textContent = title;
+  pill.title = title;
+  document.getElementById("toolTabs").appendChild(pill);
+  const view = document.createElement("main");
+  view.className = "view toolview"; view.id = "view-" + id;
+  document.querySelector(".page").appendChild(view);
+  const tab = {
+    id, view, pill, onClose: null,
+    setDone() { pill.classList.add("done"); },
+    setOnClose(fn) { tab.onClose = fn; },
+    close() { closeToolTab(id); },
+  };
+  TOOL_TABS[id] = tab;
+  activateTab(id);
+  return tab;
+}
+
+function closeToolTab(id) {
+  const tab = TOOL_TABS[id];
+  if (!tab) return;
+  if (tab.onClose) tab.onClose();
+  tab.pill.remove(); tab.view.remove();
+  delete TOOL_TABS[id];
+  activateTab("home");
 }
 
 // ---------------------------------------------------------------- job log panels
 // Polling, not a push from Python - see pollModelProgress() above for why.
-function addJobPanel(containerEl, jobId, title, stoppable) {
+function addJobPanel(containerEl, jobId, title, stoppable, onDone) {
   const wrap = document.createElement("div");
   wrap.className = "joblog";
   wrap.innerHTML = `<div class="joblog-head"><span>${title}</span>
@@ -305,6 +499,7 @@ function addJobPanel(containerEl, jobId, title, stoppable) {
     if (r.done) {
       statusEl.textContent = "Done";
       statusEl.classList.add("done");
+      if (onDone) onDone();
       return;
     }
     setTimeout(tick, 500);
@@ -315,9 +510,11 @@ function addJobPanel(containerEl, jobId, title, stoppable) {
 // ---------------------------------------------------------------- Voice Cleanup tab
 let cleanupState = null;
 
+let noiseDeck = null;
+
 async function loadCleanupTab() {
   cleanupState = await callApi("get_voice_cleanup");
-  renderNoiseGrid();
+  renderNoiseDeck();
   document.getElementById("keepCleanChk").checked = cleanupState.keepClean;
   document.getElementById("keepCleanChk").onchange = (e) => {
     cleanupState.keepClean = e.target.checked;
@@ -326,6 +523,7 @@ async function loadCleanupTab() {
   document.getElementById("saveKeyBtn").onclick = async () => {
     const key = document.getElementById("keyInput").value;
     const ok = await callApi("save_key", key);
+    cleanupState.hasKey = ok;
     document.getElementById("keyStatus").textContent = ok ? "Key saved." : "No key saved.";
     document.getElementById("keyInput").value = "";
   };
@@ -335,20 +533,35 @@ async function loadCleanupTab() {
     callApi("start_music_job", src, outDir));
 }
 
-function renderNoiseGrid() {
-  const grid = document.getElementById("noiseGrid");
-  grid.innerHTML = cleanupState.choices.map((label, i) =>
-    `<div class="sourcecard ${cleanupState.values[i] === cleanupState.noise ? "selected" : ""}"
-          data-value="${cleanupState.values[i]}">${label}</div>`).join("");
-  grid.querySelectorAll(".sourcecard").forEach((el) => el.addEventListener("click", () => {
-    cleanupState.noise = el.dataset.value;
-    renderNoiseGrid();
-    document.getElementById("keyRow").style.display = cleanupState.noise === "online" ? "flex" : "none";
-    saveCleanup();
-  }));
-  document.getElementById("noiseHelp").textContent = cleanupState.help[cleanupState.noise] || "";
-  document.getElementById("keyRow").style.display = cleanupState.noise === "online" ? "flex" : "none";
-  document.getElementById("keyStatus").textContent = cleanupState.hasKey ? "Key saved - change above." : "No key saved.";
+function noiseParts(label) {
+  const m = label.match(/^(.*) \((Offline|Online)\)$/);
+  return m ? { name: m[1], net: m[2] } : { name: label, net: "" };
+}
+
+function renderNoiseDeck() {
+  const cs = cleanupState;
+  if (!noiseDeck) {
+    noiseDeck = createDeck(document.getElementById("noiseDeck"), {
+      title: "Cleanup mode",
+      count: () => noiseParts(cs.choices[cs.values.indexOf(cs.noise)] || "Off").net,
+      sub: () => "In use: " + noiseParts(cs.choices[cs.values.indexOf(cs.noise)] || "Off").name,
+      items: () => cs.choices.map((label, i) => {
+        const p = noiseParts(label);
+        return { id: cs.values[i], badge: p.name.slice(0, 2), name: p.name, tag: p.net,
+                 sub: (cs.help[cs.values[i]] || "").split(":")[0].slice(0, 60),
+                 title: cs.help[cs.values[i]], selected: cs.values[i] === cs.noise, ready: false };
+      }),
+      onSelect: (v) => {
+        cs.noise = v; renderNoiseDeck(); saveCleanup();
+        if (state) { state.noiseLabel = cs.choices[cs.values.indexOf(v)]; renderStats(); }
+      },
+      onAction: () => {},
+    });
+  }
+  noiseDeck.render();
+  document.getElementById("noiseHelp").textContent = cs.help[cs.noise] || "";
+  document.getElementById("keyRow").style.display = cs.noise === "online" ? "flex" : "none";
+  document.getElementById("keyStatus").textContent = cs.hasKey ? "Key saved - paste a new one to change it." : "No key saved.";
 }
 
 function saveCleanup() {
@@ -387,17 +600,83 @@ function buildFileTool(containerId, verb, onRun) {
   });
   runBtn.addEventListener("click", async () => {
     const jobId = await onRun(tool.src, tool.outDir);
-    addJobPanel(el.querySelector(".joblogs"), jobId, tool.src.split(/[\\/]/).pop());
+    const name = tool.src.split(/[\\/]/).pop();
+    const tab = openToolTab(`${verb}: ${name}`);
+    addJobPanel(tab.view, jobId, name, false, () => tab.setDone());
   });
 }
 
 // ---------------------------------------------------------------- Offline Settings tab
+const ENGINES = {
+  claude: { name: "Claude Code", hint: "needs internet + the `claude` CLI" },
+  ollama: { name: "Ollama", hint: "local models" },
+  lmstudio: { name: "LM Studio", hint: "local models" },
+};
+let offlineData = null;
+let engineOrder = [], engineOn = {};
+
 async function loadOfflineTab() {
-  const data = await callApi("get_offline_settings");
-  fillOfflineSelect("ollama", data.ollamaModels, data.ollamaPicked, data.ollamaErr);
-  fillOfflineSelect("lmstudio", data.lmstudioModels, data.lmstudioPicked, data.lmstudioErr);
-  document.getElementById("ollamaRefresh").onclick = loadOfflineTab;
-  document.getElementById("lmstudioRefresh").onclick = loadOfflineTab;
+  const d = offlineData = await callApi("get_offline_settings");
+  const o = d.options;
+  engineOn = { claude: false, ollama: false, lmstudio: false };
+  o.backend_order.forEach((b) => { engineOn[b] = true; });
+  engineOrder = [...o.backend_order, ...Object.keys(ENGINES).filter((b) => !o.backend_order.includes(b))];
+  renderEngines();
+
+  const $ = (id) => document.getElementById(id);
+  $("ollamaUrl").value = o.ollama_url; $("lmstudioUrl").value = o.lmstudio_url;
+  $("ollamaCtx").value = o.ollama_num_ctx; $("sendFrames").checked = !!o.send_frames;
+  $("maxFrames").value = o.max_frames; $("timeoutMin").value = o.timeout_min;
+  $("chunkChars").value = o.chunk_chars; $("translateChunk").value = o.translate_chunk_chars;
+  fillOfflineSelect("ollama", d.ollamaModels, d.ollamaPicked, d.ollamaErr);
+  fillOfflineSelect("lmstudio", d.lmstudioModels, d.lmstudioPicked, d.lmstudioErr);
+
+  ["ollamaUrl", "lmstudioUrl", "ollamaCtx", "sendFrames", "maxFrames", "timeoutMin", "chunkChars", "translateChunk"]
+    .forEach((id) => { $(id).onchange = saveOffline; });
+  $("ollamaRefresh").onclick = async () => { await saveOffline(); loadOfflineTab(); };
+  $("lmstudioRefresh").onclick = async () => { await saveOffline(); loadOfflineTab(); };
+}
+
+function renderEngines() {
+  const box = document.getElementById("engineList");
+  let n = 0;
+  box.innerHTML = engineOrder.map((id, i) => {
+    const e = ENGINES[id];
+    const on = engineOn[id];
+    const hint = id === "claude" ? (offlineData.claudeFound ? "CLI found" : "CLI not found") : e.hint;
+    return `<div class="engine ${on ? "" : "off"}" data-id="${id}">
+      <span class="n">${on ? ++n : "-"}</span>
+      <span class="name">${e.name}<span class="hint">${hint}</span></span>
+      <button class="ic" data-m="up" title="Higher priority" ${i === 0 ? "disabled" : ""}>${ICONS.up}</button>
+      <button class="ic" data-m="down" title="Lower priority" ${i === engineOrder.length - 1 ? "disabled" : ""}>${ICONS.down}</button>
+      <label class="checkrow"><input type="checkbox" data-m="on" ${on ? "checked" : ""}> Use</label>
+    </div>`;
+  }).join("");
+  box.querySelectorAll(".engine").forEach((row) => {
+    const id = row.dataset.id;
+    row.querySelector('[data-m="on"]').addEventListener("change", (e) => {
+      engineOn[id] = e.target.checked; renderEngines(); saveOffline();
+    });
+    ["up", "down"].forEach((dir) => row.querySelector(`[data-m="${dir}"]`).addEventListener("click", () => {
+      const i = engineOrder.indexOf(id), j = dir === "up" ? i - 1 : i + 1;
+      if (j < 0 || j >= engineOrder.length) return;
+      [engineOrder[i], engineOrder[j]] = [engineOrder[j], engineOrder[i]];
+      renderEngines(); saveOffline();
+    }));
+  });
+}
+
+function saveOffline() {
+  const $ = (id) => document.getElementById(id);
+  const num = (id, lo, fallback) => Math.max(lo, parseInt($(id).value, 10) || fallback);
+  return callApi("save_offline_options", {
+    backend_order: engineOrder.filter((b) => engineOn[b]),
+    ollama_url: $("ollamaUrl").value.trim() || "http://localhost:11434",
+    lmstudio_url: $("lmstudioUrl").value.trim() || "http://localhost:1234",
+    ollama_num_ctx: num("ollamaCtx", 2048, 16384), send_frames: $("sendFrames").checked,
+    max_frames: num("maxFrames", 1, 6), timeout_min: num("timeoutMin", 1, 30),
+    chunk_chars: num("chunkChars", 2000, 12000), translate_chunk_chars: num("translateChunk", 1000, 4000),
+  });
 }
 
 function fillOfflineSelect(kind, models, picked, err) {
@@ -407,7 +686,7 @@ function fillOfflineSelect(kind, models, picked, err) {
     `<option ${m === (picked || AUTO) ? "selected" : ""}>${m}</option>`).join("");
   sel.onchange = () => callApi("save_offline_model", kind, sel.value === AUTO ? "" : sel.value);
   document.getElementById(kind + "Status").textContent =
-    err ? err : `${models.length} model(s) found.`;
+    err ? "Not reachable: " + err.slice(0, 90) : `${models.length} model(s) found.`;
 }
 
 // ---------------------------------------------------------------- History tab
@@ -486,8 +765,10 @@ function wireStart() {
       toast((res && res.message) || "Could not start.");
       return;
     }
-    if (res.live) { addLivePanel(res); return; }
-    addJobPanel(document.getElementById("jobPanels"), res.jobId, res.title, res.stoppable);
+    const tab = openToolTab(res.title);
+    if (res.live) { addLivePanel(res, tab); return; }
+    addJobPanel(tab.view, res.jobId, res.title, res.stoppable, () => tab.setDone());
+    if (res.stoppable) tab.setOnClose(() => callApi("stop_watch_job", res.jobId));
   });
 }
 
@@ -498,6 +779,7 @@ async function boot() {
   renderOutputs();
   renderSources();
   renderStats();
+  wireStats();
   wireNav();
   wireStart();
 }
@@ -506,7 +788,7 @@ boot();
 
 // ---------------------------------------------------------------- Live capture panel
 // Polls live_poll() - Python never pushes into the page.
-function addLivePanel(info) {
+function addLivePanel(info, tab) {
   const wrap = document.createElement("div");
   wrap.className = "livepanel card full";
   const d = info.devices;
@@ -514,7 +796,7 @@ function addLivePanel(info) {
   wrap.innerHTML = `
     <div class="joblog-head"><span>${info.title}</span>
       <span class="joblog-actions"><span class="joblog-status" data-t="status">Loading Whisper model...</span>
-        <button class="ghostbtn tiny" data-a="close">Close</button></span></div>
+        <button class="ghostbtn tiny" data-a="close">Close tab</button></span></div>
     <div class="liverow">
       <button class="startbtn small recbtn" data-a="rec" disabled>&#9679;&ensp;Record</button>
       <div class="meters" data-t="meters"></div>
@@ -558,7 +840,7 @@ function addLivePanel(info) {
       <button class="ghostbtn" data-a="clear">Clear</button>
       <button class="ghostbtn" data-a="redo" disabled title="Clean the whole recording and transcribe it again at full quality">Clean up &amp; re-transcribe</button>
     </div>`;
-  document.getElementById("livePanels").prepend(wrap);
+  tab.view.prepend(wrap);
   const t = (n) => wrap.querySelector(`[data-t="${n}"]`);
   const a = (n) => wrap.querySelector(`[data-a="${n}"]`);
   const sid = info.sid;
@@ -685,5 +967,6 @@ function addLivePanel(info) {
     if (!(await callApi("live_clear", sid))) return;
     textEl.innerHTML = ""; lastLabel = null; prov = {}; t("out").textContent = ""; t("msg").textContent = "";
   });
-  a("close").addEventListener("click", async () => { closed = true; await callApi("live_close", sid); wrap.remove(); });
+  tab.setOnClose(async () => { closed = true; await callApi("live_close", sid); });
+  a("close").addEventListener("click", () => tab.close());
 }

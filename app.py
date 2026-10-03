@@ -10,6 +10,7 @@ picker, settings persistence). Job dispatch (Start) is a stub until Stage 3.
 """
 import contextlib
 import datetime
+import shutil
 import threading
 import uuid
 from pathlib import Path
@@ -29,6 +30,41 @@ MODEL_PROGRESS = {}   # model_name -> {"pct": int|None, "err": str|None, "done":
 WATCH_EVENTS = {}     # job_id -> threading.Event, for the Watch mode Stop button
 LIVE = {}             # session_id -> live.LiveSession
 CAPTION = {"sid": None, "window": None}   # the single always-on-top caption overlay
+
+
+def _model_dir(name):
+    """Folder in the Hugging Face cache that holds this Whisper model's files."""
+    from huggingface_hub.constants import HF_HUB_CACHE
+    return Path(HF_HUB_CACHE) / ("models--" + vs.repo_for(name).replace("/", "--"))
+
+
+def _model_info(n, s, d):
+    folder = _model_dir(n)
+    size = 0
+    if folder.exists():
+        size = sum(f.stat().st_size for f in folder.rglob("*") if f.is_file())
+    return {"name": n, "size": s, "desc": d, "downloaded": vs.is_downloaded(n),
+            "onDisk": folder.exists(), "diskMB": round(size / 1024 / 1024)}
+
+
+# Engine settings that vs reads as module globals; applied at start-up and after every save.
+OFFLINE_DEFAULTS = {"backend_order": ["claude", "ollama", "lmstudio"],
+                    "ollama_url": "http://localhost:11434", "lmstudio_url": "http://localhost:1234",
+                    "ollama_num_ctx": 16384, "send_frames": False, "max_frames": 6,
+                    "timeout_min": 30, "chunk_chars": 12000, "translate_chunk_chars": 4000}
+
+
+def apply_offline_settings():
+    s = vs.load_settings()
+    o = {k: s.get(k, v) for k, v in OFFLINE_DEFAULTS.items()}
+    order = [b for b in o["backend_order"] if b in ("claude", "ollama", "lmstudio")]
+    vs.BACKEND, vs.BACKEND_ORDER = "auto", order or list(OFFLINE_DEFAULTS["backend_order"])
+    vs.OLLAMA_URL, vs.LMSTUDIO_URL = o["ollama_url"].rstrip("/"), o["lmstudio_url"].rstrip("/")
+    vs.OLLAMA_NUM_CTX = int(o["ollama_num_ctx"])
+    vs.LOCAL_SEND_FRAMES, vs.LOCAL_MAX_FRAMES = bool(o["send_frames"]), int(o["max_frames"])
+    vs.LOCAL_TIMEOUT_SEC = int(o["timeout_min"]) * 60
+    vs.CHUNK_CHARS, vs.TRANSLATE_CHUNK_CHARS = int(o["chunk_chars"]), int(o["translate_chunk_chars"])
+    return o
 
 
 def _noise_label(value: str) -> str:
@@ -113,8 +149,7 @@ class Api:
     def get_home_data(self):
         saved = vs.load_settings()
         online0 = vs.internet_ok()
-        models = [{"name": n, "size": s, "desc": d, "downloaded": vs.is_downloaded(n)}
-                  for n, s, d in vs.WHISPER_MODELS]
+        models = [_model_info(n, s, d) for n, s, d in vs.WHISPER_MODELS]
         spoken_code = saved.get("language")
         device, _ = vs.pick_device()
         return {
@@ -171,6 +206,27 @@ class Api:
                 MODEL_PROGRESS[name] = {"pct": None, "err": str(e)[:300], "done": True}
         threading.Thread(target=worker, daemon=True).start()
         return True
+
+    def get_models(self):
+        return [_model_info(n, s, d) for n, s, d in vs.WHISPER_MODELS]
+
+    def model_open_folder(self, name):
+        folder = _model_dir(name)
+        if not folder.exists():
+            return {"ok": False, "message": f"'{name}' has no files on disk yet."}
+        vs.open_path(str(folder))
+        return {"ok": True}
+
+    def model_delete(self, name):
+        MODEL_PROGRESS.pop(name, None)
+        folder = _model_dir(name)
+        if folder.exists():
+            shutil.rmtree(folder, ignore_errors=True)
+        return {"ok": not folder.exists()}
+
+    def model_redownload(self, name):
+        self.model_delete(name)
+        return self.download_model(name)
 
     def get_model_progress(self, name):
         return MODEL_PROGRESS.get(name, {"pct": None, "err": None, "done": False})
@@ -392,13 +448,25 @@ class Api:
             except Exception as e:
                 return [], str(e)[:200]
 
+        apply_offline_settings()
         ollama, ollama_err = safe_list(vs.list_ollama_models)
         lmstudio, lmstudio_err = safe_list(vs.list_lmstudio_models)
         return {
+            "options": {k: s.get(k, v) for k, v in OFFLINE_DEFAULTS.items()},
+            "claudeFound": bool(shutil.which("claude")),
             "ollamaModels": ollama, "ollamaErr": ollama_err, "ollamaPicked": s.get("ollama_model", ""),
             "lmstudioModels": lmstudio, "lmstudioErr": lmstudio_err,
             "lmstudioPicked": s.get("lmstudio_model", ""),
         }
+
+    def save_offline_options(self, data):
+        s = vs.load_settings()
+        for k in OFFLINE_DEFAULTS:
+            if k in data:
+                s[k] = data[k]
+        vs.save_settings(s)
+        apply_offline_settings()
+        return True
 
     def save_offline_model(self, kind, name):
         s = vs.load_settings()
@@ -464,6 +532,7 @@ class Api:
         return True
 
 def main():
+    apply_offline_settings()
     if not vs.internet_ok():
         import os
         os.environ["HF_HUB_OFFLINE"] = "1"
