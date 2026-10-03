@@ -117,7 +117,7 @@ Settings live in `video_summarizer_settings.json` (not committed). The earlier T
 - GPU libraries are version-sensitive. Whisper's CUDA 12 cuDNN and PyTorch's CUDA 13 cuDNN can clash in one process; Demucs retries without cuDNN automatically when that happens.
 - A Whisper model whose download was interrupted shows up as not downloaded - click it again to re-download (needs internet).
 - The first Studio AI run is slow while models download; CPU-only Studio AI runs at roughly real-time speed.
-- Not carried over from the old interface: and the "only this part (e.g. 10:00-25:00)" clip range.
+- Not carried over from the old interface: the "only this part (e.g. 10:00-25:00)" clip range.
 
 ## Roadmap - future features
 
