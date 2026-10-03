@@ -292,4 +292,4 @@ The ElevenLabs key is encrypted with Windows DPAPI and tied to your Windows acco
 
 ## License
 
-No license has been chosen yet. All rights reserved until one is added.
+[MIT](LICENSE). Bundled third-party tools (e.g. `tools/deep-filter.exe`, ffmpeg, Whisper models, Demucs) keep their own licenses.
