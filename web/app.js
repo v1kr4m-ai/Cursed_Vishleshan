@@ -556,6 +556,7 @@ function addLivePanel(info) {
       <button class="startbtn small" data-a="save" disabled>Save</button>
       <button class="ghostbtn" data-a="copy">Copy text</button>
       <button class="ghostbtn" data-a="clear">Clear</button>
+      <button class="ghostbtn" data-a="redo" disabled title="Clean the whole recording and transcribe it again at full quality">Clean up &amp; re-transcribe</button>
     </div>`;
   document.getElementById("livePanels").prepend(wrap);
   const t = (n) => wrap.querySelector(`[data-t="${n}"]`);
@@ -598,6 +599,21 @@ function addLivePanel(info) {
       const [target, text, by] = r;
       t("out").textContent = text ? text.replace(/^\[\d\d:\d\d:\d\d\]\s*/gm, "") : "";
       t("msg").textContent = text ? `${target} - by ${by}` : `No translator available for ${target} (needs Claude Code, Ollama or LM Studio)`;
+    } else if (kind === "redone") {
+      const [entries, name, unclear, alerts] = r;
+      if (entries === null) { t("status").textContent = `Clean-up failed: ${name}`; return; }
+      textEl.innerHTML = ""; lastLabel = null; prov = {};
+      for (const e of entries) {
+        const label = [e.who, e.langName].filter(Boolean).join(" \u00b7 ");
+        if (label !== lastLabel) {
+          const tag = document.createElement("span");
+          tag.className = "langtag"; tag.textContent = (lastLabel ? "\n" : "") + `[${label}] `;
+          textEl.appendChild(tag); lastLabel = label;
+        }
+        textEl.appendChild(document.createTextNode(e.text + " "));
+      }
+      t("out").textContent = ""; t("msg").textContent = "";
+      t("status").textContent = `Re-transcribed after '${name}' cleanup` + (unclear ? ` - ${unclear} line(s) marked [unclear]` : "");
     } else if (kind === "speech") t("msg").textContent = r[0];
   };
   const tick = async () => {
@@ -612,6 +628,7 @@ function addLivePanel(info) {
     const idle = !p.recording && !p.finalizing;
     a("translate").disabled = !(idle && p.hasEntries && !p.busy);
     a("save").disabled = !(idle && p.hasEntries);
+    a("redo").disabled = !(idle && p.hasEntries && !p.busy);
     a("read").textContent = p.speaking ? "Stop reading" : "Read aloud";
     setTimeout(tick, 400);
   };
@@ -658,6 +675,11 @@ function addLivePanel(info) {
   a("save").addEventListener("click", async () => { const r = await callApi("live_save", sid); toast("Saved to " + r.dir); });
   a("copy").addEventListener("click", async () => {
     await navigator.clipboard.writeText(await callApi("live_text", sid)); toast("Text copied");
+  });
+  a("redo").addEventListener("click", async () => {
+    if (!confirm("Clean the whole recording (voice isolation + noise removal) and transcribe it again at full quality?\n\nThis replaces the live transcript and can take a while.")) return;
+    const r = await callApi("live_redo", sid);
+    if (!r.ok) toast(r.message);
   });
   a("clear").addEventListener("click", async () => {
     if (!(await callApi("live_clear", sid))) return;

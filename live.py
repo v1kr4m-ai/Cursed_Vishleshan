@@ -6,8 +6,11 @@ instead of touching widgets it appends events to a list that the web UI POLLS
 (never pushed - see app.py for why). One LiveSession per Live tab.
 """
 import datetime
+import inspect
 import queue
 import re
+import shutil
+import tempfile
 import threading
 import time
 import wave
@@ -530,6 +533,69 @@ class LiveSession:
                        self.lang_summary(), duration, files)
         vs.open_path(vs.SAVE_DIR)
         return {"dir": str(vs.SAVE_DIR), "name": base.name}
+
+    def redo(self):
+        """Clean the whole recording (voice isolation + noise removal) and transcribe it again at
+        full quality, replacing the live transcript. Runs in a background thread."""
+        S = self.S
+        if S["recording"] or S["finalize"] or S["busy"] or not S["entries"]:
+            return {"ok": False, "message": "Stop recording first (and record something)."}
+        level = self.cfg.get("noise", "off")
+        level = "studio" if level in ("off", "light", "strong") else level
+        name = dict((v, k) for k, v in vs.NOISE_CHOICES)[level]
+        S["busy"] = True
+        self._emit("speech", f"Cleaning up with {name} and re-transcribing... (this can take a while)")
+
+        def job():
+            np, new = self.np, []
+            try:
+                tmp = Path(tempfile.mkdtemp(prefix="vidsum_redo_"))
+                for ch in self.chans:
+                    with self.lock:
+                        audio = np.concatenate(ch["all"]) if ch["all"] else np.zeros(0, np.float32)
+                    if len(audio) < SR:
+                        continue
+                    raw = tmp / f"{ch['key']}_raw.wav"
+                    with wave.open(str(raw), "wb") as w:
+                        w.setnchannels(1)
+                        w.setsampwidth(2)
+                        w.setframerate(SR)
+                        w.writeframes((np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes())
+                    self._emit("speech", f"{ch['label'] or self.src_name}: cleaning {vs.fmt(len(audio) / SR)} of audio...")
+                    (tmp / ch["key"]).mkdir(exist_ok=True)
+                    path, _ = vs.prepare_audio(raw, None, level, tmp / ch["key"], self.online)
+                    m = S["model"]
+                    kw = vs.decode_kwargs(m, noisy=True)
+                    if not self.cfg["language"] and "multilingual" in inspect.signature(m.transcribe).parameters:
+                        kw["multilingual"] = True
+                    self._emit("speech", f"{ch['label'] or self.src_name}: transcribing the cleaned audio...")
+                    with self.model_lock:
+                        segs, info = m.transcribe(path, language=self.cfg["language"], **kw)
+                        guard = vs.LoopGuard()
+                        for s_ in segs:
+                            t_ = s_.text.strip()
+                            if not t_ or vs.is_hallucination(t_, s_) or guard.repeat(t_):
+                                continue
+                            new.append({"t": s_.start, "lang": self.cfg["language"] or info.language,
+                                        "text": t_ + (" [unclear]" if vs.unclear(s_) else ""),
+                                        "who": ch["label"], "dur": max(s_.end - s_.start, 0.5)})
+                shutil.rmtree(tmp, ignore_errors=True)
+                new.sort(key=lambda e: e["t"])
+                words = S["alert_words"]
+                S["entries"], S["translations"] = new, {}
+                S["alerts"] = [{"t": e["t"], "who": e["who"], "text": e["text"],
+                                "words": [w for w in words if w.lower() in e["text"].lower()]}
+                               for e in new if any(w.lower() in e["text"].lower() for w in words)]
+                self.clear_captions()
+                S["busy"] = False
+                self._emit("redone", [{"text": e["text"], "who": e["who"],
+                                       "langName": vs.lang_name(e["lang"])} for e in new], name,
+                           sum("[unclear]" in e["text"] for e in new), len(S["alerts"]))
+            except Exception as e:
+                S["busy"] = False
+                self._emit("redone", None, str(e)[:150], 0, 0)
+        threading.Thread(target=job, daemon=True).start()
+        return {"ok": True}
 
     def clear(self):
         np, S = self.np, self.S

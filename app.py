@@ -278,6 +278,9 @@ class Api:
     def live_save(self, sid):
         return LIVE[sid].save()
 
+    def live_redo(self, sid):
+        return LIVE[sid].redo()
+
     def live_clear(self, sid):
         return LIVE[sid].clear()
 
