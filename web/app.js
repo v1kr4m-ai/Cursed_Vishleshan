@@ -595,10 +595,10 @@ async function loadCleanupTab() {
     document.getElementById("keyStatus").textContent = ok ? "Key saved." : "No key saved.";
     document.getElementById("keyInput").value = "";
   };
-  buildFileTool("cuTool", "Clean up", async (src, outDir) =>
-    callApi("start_cleanup_job", src, outDir, cleanupState.noise));
-  buildFileTool("muTool", "Extract music", async (src, outDir) =>
-    callApi("start_music_job", src, outDir));
+  buildFileTool("cuTool", "Clean up", async (src, outDir, speed) =>
+    callApi("start_cleanup_job", src, outDir, cleanupState.noise, speed));
+  buildFileTool("muTool", "Extract music", async (src, outDir, speed) =>
+    callApi("start_music_job", src, outDir, speed));
 }
 
 function noiseParts(label) {
@@ -644,6 +644,7 @@ function buildFileTool(containerId, verb, onRun) {
       <span class="pickpath muted" data-t="src">(none selected)</span></div>
     <div class="pickrow"><button class="ghostbtn" data-a="out">Browse folder...</button>
       <span class="pickpath muted" data-t="out">(same folder as the file)</span></div>
+    <div class="pickrow"><select class="select" data-a="speed" title="Slow the saved audio down (pitch kept) - handy for picking out fast lyrics">${(state.speedChoices || []).map((c) => `<option>Speed: ${c}</option>`).join("")}</select></div>
     <button class="startbtn small" data-a="run" disabled>${verb}&ensp;&#9654;</button>
     <div class="joblogs"></div>`;
   const runBtn = el.querySelector('[data-a="run"]');
@@ -667,7 +668,7 @@ function buildFileTool(containerId, verb, onRun) {
     }
   });
   runBtn.addEventListener("click", async () => {
-    const jobId = await onRun(tool.src, tool.outDir);
+    const jobId = await onRun(tool.src, tool.outDir, el.querySelector('[data-a="speed"]').value.replace("Speed: ", ""));
     const name = tool.src.split(/[\\/]/).pop();
     addJobPanel(cuQueue(), jobId, `${verb}: ${name}`, false);
   });

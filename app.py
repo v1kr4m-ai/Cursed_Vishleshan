@@ -468,13 +468,14 @@ class Api:
             vs.save_elevenlabs_key(key.strip())
         return bool(vs.elevenlabs_key())
 
-    def start_cleanup_job(self, src_path, out_dir, noise_mode):
+    def start_cleanup_job(self, src_path, out_dir, noise_mode, speed=None):
         out_dir = Path(out_dir) if out_dir else Path(src_path).parent
-        return _run_job(vs._run_cleanup_job, Path(src_path), out_dir, noise_mode, self._online())
+        return _run_job(vs._run_cleanup_job, Path(src_path), out_dir, noise_mode, self._online(),
+                         dict(vs.SPEED_CHOICES).get(speed, 1.0))
 
-    def start_music_job(self, src_path, out_dir):
+    def start_music_job(self, src_path, out_dir, speed=None):
         out_dir = Path(out_dir) if out_dir else Path(src_path).parent
-        return _run_job(vs._run_music_job, Path(src_path), out_dir)
+        return _run_job(vs._run_music_job, Path(src_path), out_dir, dict(vs.SPEED_CHOICES).get(speed, 1.0))
 
     # ---------------------------------------------------------------- Offline Settings tab
     def get_offline_settings(self):

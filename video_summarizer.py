@@ -1945,7 +1945,15 @@ def _audio_job_history(kind, title, src_path, out_path, mode, started):
     add_history(kind, title, src_path, mode, dur, [out_path], details)
 
 
-def _run_music_job(src_path: Path, out_dir: Path):
+def _speed_tag(speed):
+    return f"_{round(speed * 100)}pct" if speed < 1.0 else ""
+
+
+def _mode_with_speed(mode, speed):
+    return f"{mode}, slowed to {speed:.0%}" if speed < 1.0 else mode
+
+
+def _run_music_job(src_path: Path, out_dir: Path, speed=1.0):
     """Standalone: isolate the background music/instrumental from a song and save it."""
     print(f"Isolating background music: {src_path}\n")
     started = time.time()
@@ -1959,20 +1967,25 @@ def _run_music_job(src_path: Path, out_dir: Path):
         if not result:
             print("[!] Could not isolate the music - is demucs installed?  pip install demucs")
             return
-        out_path = out_dir / f"{src_path.stem}_music.wav"
+        tag = _speed_tag(speed)
+        out_path = out_dir / f"{src_path.stem}_music{tag}.wav"
         n = 2
         while out_path.exists():
-            out_path = out_dir / f"{src_path.stem}_music_{n}.wav"
+            out_path = out_dir / f"{src_path.stem}_music{tag}_{n}.wav"
             n += 1
-        shutil.copyfile(result, out_path)
+        if speed < 1.0:
+            print(f"  Slowing to {speed:.0%} speed...")
+            _ff("-i", result, "-af", _with_tempo("", speed), out_path)
+        else:
+            shutil.copyfile(result, out_path)
         print(f"\nSaved: {out_path}")
         _audio_job_history("music", f"{src_path.stem} - background music", src_path, out_path,
-                           "Demucs vocal removal (Offline)", started)
+                           _mode_with_speed("Demucs vocal removal (Offline)", speed), started)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def _run_cleanup_job(src_path: Path, out_dir: Path, noise_mode, online):
+def _run_cleanup_job(src_path: Path, out_dir: Path, noise_mode, online, speed=1.0):
     """Standalone voice cleanup: clean one file's audio and save it - no transcription."""
     print(f"Cleaning up: {src_path}\n")
     started = time.time()
@@ -1983,16 +1996,18 @@ def _run_cleanup_job(src_path: Path, out_dir: Path, noise_mode, online):
     out_dir.mkdir(parents=True, exist_ok=True)
     tmpdir = Path(tempfile.mkdtemp(prefix="vidsum_clean_"))
     try:
-        audio_src, _ = prepare_audio(src_path, None, noise_mode, tmpdir, online)
-        out_path = out_dir / f"{src_path.stem}_cleaned.wav"
+        audio_src, _ = prepare_audio(src_path, None, noise_mode, tmpdir, online, speed)
+        tag = _speed_tag(speed)
+        out_path = out_dir / f"{src_path.stem}_cleaned{tag}.wav"
         n = 2
         while out_path.exists():
-            out_path = out_dir / f"{src_path.stem}_cleaned_{n}.wav"
+            out_path = out_dir / f"{src_path.stem}_cleaned{tag}_{n}.wav"
             n += 1
         shutil.copyfile(audio_src, out_path)
         print(f"\nSaved: {out_path}")
         _audio_job_history("cleanup", f"{src_path.stem} - cleaned voice", src_path, out_path,
-                           dict((v, k) for k, v in NOISE_CHOICES).get(noise_mode, noise_mode), started)
+                           _mode_with_speed(dict((v, k) for k, v in NOISE_CHOICES).get(noise_mode, noise_mode), speed),
+                           started)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
