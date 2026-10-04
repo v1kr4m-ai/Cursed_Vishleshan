@@ -910,6 +910,7 @@ function addLivePanel(info, tab) {
       <button class="startbtn small" data-a="save" disabled>Save</button>
       <button class="ghostbtn" data-a="copy">Copy text</button>
       <button class="ghostbtn" data-a="clear">Clear</button>
+      <select class="select" data-a="redospeed" style="width:auto;" title="Slow the recording down before re-transcribing - helps with fast speech">${(state.speedChoices || []).map((c) => `<option ${c === state.speed ? "selected" : ""}>Speed: ${c}</option>`).join("")}</select>
       <button class="ghostbtn" data-a="redo" disabled title="Clean the whole recording and transcribe it again at full quality">Clean up &amp; re-transcribe</button>
     </div>`;
   tab.view.prepend(wrap);
@@ -983,6 +984,7 @@ function addLivePanel(info, tab) {
     a("translate").disabled = !(idle && p.hasEntries && !p.busy);
     a("save").disabled = !(idle && p.hasEntries);
     a("redo").disabled = !(idle && p.hasEntries && !p.busy);
+    a("redospeed").disabled = a("redo").disabled;
     a("read").textContent = p.speaking ? "Stop reading" : "Read aloud";
     setTimeout(tick, 400);
   };
@@ -1032,7 +1034,7 @@ function addLivePanel(info, tab) {
   });
   a("redo").addEventListener("click", async () => {
     if (!confirm("Clean the whole recording (voice isolation + noise removal) and transcribe it again at full quality?\n\nThis replaces the live transcript and can take a while.")) return;
-    const r = await callApi("live_redo", sid);
+    const r = await callApi("live_redo", sid, a("redospeed").value.replace("Speed: ", ""));
     if (!r.ok) toast(r.message);
   });
   a("clear").addEventListener("click", async () => {

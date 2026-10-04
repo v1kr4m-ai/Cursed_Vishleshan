@@ -319,12 +319,8 @@ SPEED_CHOICES = [("Normal", 1.0), ("Slightly slower (85%)", 0.85), ("Slower (75%
 _SPEED = 1.0
 
 
-def _tempo_filter():
-    return f"atempo={_SPEED}" if _SPEED < 1.0 else ""
-
-
-def _with_tempo(af):
-    return ",".join(x for x in (af, _tempo_filter()) if x)
+def _with_tempo(af, speed):
+    return ",".join(x for x in (af, f"atempo={speed}" if speed < 1.0 else "") if x)
 
 
 FINAL_LEVEL = "highpass=f=70,loudnorm=I=-20:TP=-2:LRA=11"   # even out the volume of the cleaned voice
@@ -602,13 +598,14 @@ def elevenlabs_key():
     return legacy
 
 
-def prepare_audio(video, clip, noise, tmpdir, online=False):
+def prepare_audio(video, clip, noise, tmpdir, online=False, speed=None):
     """Cut the clip range and/or clean up the voice into a temporary WAV for Whisper.
     Returns (path_for_whisper, start_offset_seconds)."""
     noise = {"ai": "studio"}.get(noise, noise or "off")
     start = float(clip[0] or 0) if clip else 0.0
     end = clip[1] if clip else None
-    if not clip and noise == "off" and _SPEED >= 1.0:
+    speed = _SPEED if speed is None else speed
+    if not clip and noise == "off" and speed >= 1.0:
         return str(video), 0.0
     if not shutil.which("ffmpeg"):
         print("[!] ffmpeg not found - clip range / voice cleanup skipped.")
@@ -617,8 +614,8 @@ def prepare_audio(video, clip, noise, tmpdir, online=False):
     what = []
     if clip:
         what.append(f"part {fmt(start)} - {fmt(end) if end else 'end'}")
-    if _SPEED < 1.0:
-        what.append(f"slowed to {_SPEED:.0%} speed")
+    if speed < 1.0:
+        what.append(f"slowed to {speed:.0%} speed")
     if noise != "off":
         what.append("voice cleanup: " + dict((v, k) for k, v in NOISE_CHOICES)[noise])
     print("Preparing audio (" + ", ".join(what) + ")...")
@@ -628,7 +625,7 @@ def prepare_audio(video, clip, noise, tmpdir, online=False):
 
     if noise in ("off", "light", "strong"):
         out = tmp / "audio.wav"
-        af = _with_tempo(NOISE_FILTERS.get(noise, ""))
+        af = _with_tempo(NOISE_FILTERS.get(noise, ""), speed)
         _ff(*cut, "-ac", 1, "-ar", SR, *(["-af", af] if af else []), out)
         return str(out), start
 
@@ -658,7 +655,7 @@ def prepare_audio(video, clip, noise, tmpdir, online=False):
             voice = tmp / "strong.wav"
             _ff("-i", iso, "-ac", 1, "-ar", SR, "-af", NOISE_FILTERS["strong"], voice)
     out = tmp / "clean.wav"
-    _ff("-i", voice, "-ac", 1, "-ar", SR, "-af", _with_tempo(FINAL_LEVEL), out)
+    _ff("-i", voice, "-ac", 1, "-ar", SR, "-af", _with_tempo(FINAL_LEVEL, speed), out)
     print(f"  Voice cleanup finished in {fmt(time.time() - t0)}.")
     return str(out), start
 

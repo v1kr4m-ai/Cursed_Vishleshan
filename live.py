@@ -534,7 +534,7 @@ class LiveSession:
         vs.open_path(vs.SAVE_DIR)
         return {"dir": str(vs.SAVE_DIR), "name": base.name}
 
-    def redo(self):
+    def redo(self, speed=1.0):
         """Clean the whole recording (voice isolation + noise removal) and transcribe it again at
         full quality, replacing the live transcript. Runs in a background thread."""
         S = self.S
@@ -543,8 +543,10 @@ class LiveSession:
         level = self.cfg.get("noise", "off")
         level = "studio" if level in ("off", "light", "strong") else level
         name = dict((v, k) for k, v in vs.NOISE_CHOICES)[level]
+        speed = min(max(float(speed or 1.0), 0.5), 1.0)
         S["busy"] = True
-        self._emit("speech", f"Cleaning up with {name} and re-transcribing... (this can take a while)")
+        slow = f" at {speed:.0%} speed" if speed < 1.0 else ""
+        self._emit("speech", f"Cleaning up with {name} and re-transcribing{slow}... (this can take a while)")
 
         def job():
             np, new = self.np, []
@@ -563,7 +565,7 @@ class LiveSession:
                         w.writeframes((np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes())
                     self._emit("speech", f"{ch['label'] or self.src_name}: cleaning {vs.fmt(len(audio) / SR)} of audio...")
                     (tmp / ch["key"]).mkdir(exist_ok=True)
-                    path, _ = vs.prepare_audio(raw, None, level, tmp / ch["key"], self.online)
+                    path, _ = vs.prepare_audio(raw, None, level, tmp / ch["key"], self.online, speed)
                     m = S["model"]
                     kw = vs.decode_kwargs(m, noisy=True)
                     if not self.cfg["language"] and "multilingual" in inspect.signature(m.transcribe).parameters:
@@ -576,9 +578,9 @@ class LiveSession:
                             t_ = s_.text.strip()
                             if not t_ or vs.is_hallucination(t_, s_) or guard.repeat(t_):
                                 continue
-                            new.append({"t": s_.start, "lang": self.cfg["language"] or info.language,
+                            new.append({"t": s_.start * speed, "lang": self.cfg["language"] or info.language,
                                         "text": t_ + (" [unclear]" if vs.unclear(s_) else ""),
-                                        "who": ch["label"], "dur": max(s_.end - s_.start, 0.5)})
+                                        "who": ch["label"], "dur": max((s_.end - s_.start) * speed, 0.5)})
                 shutil.rmtree(tmp, ignore_errors=True)
                 new.sort(key=lambda e: e["t"])
                 words = S["alert_words"]

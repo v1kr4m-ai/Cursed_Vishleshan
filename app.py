@@ -359,8 +359,8 @@ class Api:
     def live_save(self, sid):
         return LIVE[sid].save()
 
-    def live_redo(self, sid):
-        return LIVE[sid].redo()
+    def live_redo(self, sid, speed=None):
+        return LIVE[sid].redo(dict(vs.SPEED_CHOICES).get(speed, 1.0))
 
     def live_clear(self, sid):
         return LIVE[sid].clear()
