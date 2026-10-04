@@ -356,7 +356,7 @@ def _demucs_run(src44: Path, out: Path, keep: str, mono: bool, what: str, _retry
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     name = DEMUCS_MODEL if DEMUCS_MODEL != "auto" else ("htdemucs_ft" if dev == "cuda" else "htdemucs")
     print(f"  Isolating {what} with Demucs ({name}, {'GPU' if dev == 'cuda' else 'CPU'}) - "
-          f"first use downloads the model...")
+          f"the model downloads only the first time, then is reused...")
     try:
         model = get_model(name)
         model.eval()
