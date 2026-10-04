@@ -10,6 +10,16 @@ picker, settings persistence). Job dispatch (Start) is a stub until Stage 3.
 """
 import contextlib
 import datetime
+import sys
+from pathlib import Path
+
+# Started with pythonw (no console window): stdout/stderr don't exist, which crashes libraries
+# that write progress bars. Send them to a log file instead - also the place to look for errors.
+if sys.stdout is None or sys.stderr is None:
+    _log = open(Path(__file__).with_name("app.log"), "a", encoding="utf-8", buffering=1)
+    sys.stdout = sys.stdout or _log
+    sys.stderr = sys.stderr or _log
+
 import shutil
 import threading
 import uuid

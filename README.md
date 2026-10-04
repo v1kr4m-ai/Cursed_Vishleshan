@@ -129,7 +129,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-or double-click `Cursed_Vishleshan.bat`.
+or double-click `Cursed_Vishleshan.bat` (no console window; errors go to `app.log`). `Cursed_Vishleshan_debug.bat` keeps a console open to watch the output live.
 
 On the Home screen: click a Whisper model to download it, pick a source, press **Start**. The first run of anything needing a model (Whisper, Demucs, DeepFilterNet) downloads it once and reuses it afterwards.
 
