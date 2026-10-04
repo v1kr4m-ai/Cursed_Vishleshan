@@ -100,7 +100,17 @@
           <div id="muTool"></div>
         </div>
       </div>
-      <div class="sidecol"><div id="noiseDeck" class="deckhost"></div></div>
+      <div class="sidecol">
+        <div id="noiseDeck" class="deckhost"></div>
+        <div class="card" id="cuQueueCard">
+          <div class="rowflex" style="justify-content:space-between;">
+            <h2 style="margin:0;">Queue</h2>
+            <button class="ghostbtn tiny" id="cuQueueClear">Clear finished</button>
+          </div>
+          <p class="muted small" id="cuQueueEmpty">Cleanup and music jobs show up here, one after another.</p>
+          <div id="cuQueueList"></div>
+        </div>
+      </div>
     </section>
   </main>
 

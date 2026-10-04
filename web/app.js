@@ -539,6 +539,7 @@ function addJobPanel(tab, jobId, title, stoppable) {
       statusEl.textContent = "Done";
       statusEl.classList.add("done");
       tab.jobDone();
+      wrap.classList.add("finished");
       return;
     }
     statusEl.textContent = r.queued ? `Queued - ${r.queued} ahead` : "Running...";
@@ -548,6 +549,18 @@ function addJobPanel(tab, jobId, title, stoppable) {
 }
 
 // ---------------------------------------------------------------- Voice Cleanup tab
+
+// Cleanup and music jobs run inside the Voice Cleanup tab: their panels stack in the Queue card.
+function cuQueue() {
+  const list = document.getElementById("cuQueueList"), empty = document.getElementById("cuQueueEmpty");
+  let pending = 0;
+  empty.style.display = "none";
+  document.getElementById("cuQueueClear").onclick = () => {
+    list.querySelectorAll(".joblog.finished").forEach((w) => w.remove());
+    empty.style.display = list.children.length ? "none" : "";
+  };
+  return { view: list, jobStarted() { pending++; }, jobDone() { pending--; }, setOnClose() {} };
+}
 let cleanupState = null;
 
 let noiseDeck = null;
@@ -641,8 +654,7 @@ function buildFileTool(containerId, verb, onRun) {
   runBtn.addEventListener("click", async () => {
     const jobId = await onRun(tool.src, tool.outDir);
     const name = tool.src.split(/[\\/]/).pop();
-    const tab = openToolTab(verb, "tool:" + verb);
-    addJobPanel(tab, jobId, name, false);
+    addJobPanel(cuQueue(), jobId, `${verb}: ${name}`, false);
   });
 }
 
