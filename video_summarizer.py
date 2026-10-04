@@ -1261,12 +1261,15 @@ def _scaled_info(info):
                                  language_probability=info.language_probability)
 
 
-def transcribe(model, video, language, multilingual=False, detections=None, offset=0.0, noisy=False, diar=None):
+def transcribe(model, video, language, multilingual=False, detections=None, offset=0.0, noisy=False, diar=None,
+               words=False):
     """offset = where the audio starts inside the full video (clip range), added to timestamps."""
     kwargs = {"language": language, "task": "transcribe"}
     if multilingual and "multilingual" in inspect.signature(model.transcribe).parameters:
         kwargs["multilingual"] = True
     kwargs.update(decode_kwargs(model, noisy, raw=True))
+    if words:
+        kwargs["word_timestamps"] = True
     segments, info = model.transcribe(video, **kwargs)
     info = _scaled_info(info)
     print(f"Duration: {fmt(info.duration)}")
@@ -1290,7 +1293,9 @@ def transcribe(model, video, language, multilingual=False, detections=None, offs
             text = f"Speaker {spk}: {text}"
         raw_stamped.append(f"[{fmt(rt)}] {rpre}{text}")
         raw_plain.append(text)
-        raw_segs.append((rt, seg.end * _SPEED + offset, text))
+        wl = [(w.start * _SPEED + offset, w.end * _SPEED + offset, w.word.strip(), getattr(w, "probability", 1.0))
+              for w in (getattr(seg, "words", None) or []) if w.word.strip()] if words else None
+        raw_segs.append((rt, seg.end * _SPEED + offset, text, wl))
         if is_hallucination(text, seg) or guard.repeat(text):
             dropped += 1
             continue
@@ -1637,6 +1642,68 @@ def translate_transcript(transcript, target, online):
     return None, None
 
 
+# ---------------------------------------------------------------- chapters + key points
+_CH_RE = re.compile(r"^\W*(CHAPTER|POINT)\W*\|\W*\[?(\d{1,2}):(\d\d):?(\d\d)?\]?\W*\|\s*(.+?)\s*$", re.I)
+
+
+def _hms(h, m, s):
+    return int(h) * 3600 + int(m) * 60 + int(s or 0)
+
+
+def make_chapters(body, duration, target, online, min_gap=None):
+    """Chapters and timestamped key points from a '[HH:MM:SS] text' transcript, written in `target`
+    language. Returns (markdown, backend_label) or (None, None)."""
+    if not body.strip():
+        return None, None
+    if min_gap is None:
+        min_gap = 60 if duration > 600 else 20   # short clips get closer chapters
+    chunks = split_chunks(body, CHUNK_CHARS)
+    system = "You analyse video transcripts and structure them precisely. Follow the output format exactly."
+    for label, fn in text_llms(online):
+        try:
+            chapters, points = [], []
+            for i, ch in enumerate(chunks, 1):
+                print(f"\r  Finding chapters ({label}): part {i}/{len(chunks)}", end="", flush=True)
+                reply = fn(system,
+                           f"This is part {i} of {len(chunks)} of a timestamped transcript.\n"
+                           f"1. List the chapters that START in this part: one for each distinct topic or change of subject (even a short video can have 2-3), "
+                           f"roughly one every 2-5 minutes, at least one per part.\n"
+                           f"2. List 2-5 key points (important facts, decisions, claims or moments).\n"
+                           f"Output ONLY lines in exactly this format, with the timestamp copied from a transcript line:\n"
+                           f"CHAPTER|HH:MM:SS|short chapter title (max 8 words)\n"
+                           f"POINT|HH:MM:SS|one-sentence key point\n"
+                           f"Write titles and points in {target}.{vocab_note()}\n\n{ch}")
+                for line in reply.splitlines():
+                    m = _CH_RE.match(line)
+                    if m:
+                        (chapters if m.group(1).upper() == "CHAPTER" else points).append(
+                            (_hms(m.group(2), m.group(3), m.group(4)), m.group(5)))
+            print()
+            if not chapters:
+                continue
+            chapters.sort()
+            kept = []
+            for t, title in chapters:
+                if not kept or t - kept[-1][0] >= min_gap:
+                    kept.append((t, title))
+            if kept[0][0] > 0:
+                kept.insert(0, (0, "Intro"))
+            kept[0] = (0, kept[0][1])
+            points.sort()
+            nl = chr(10)
+            out = ["## Chapters", ""] + [f"{fmt(t)} {title}" for t, title in kept] + ["", "## Key points", ""]
+            for k, (t, title) in enumerate(kept):
+                end = kept[k + 1][0] if k + 1 < len(kept) else duration + 1
+                inside = [(pt, tx) for pt, tx in points if t <= pt < end]
+                out.append(f"### {fmt(t)} {title}")
+                out += [f"- {fmt(pt)} {tx}" for pt, tx in inside] or ["- (no key points)"]
+                out.append("")
+            return nl.join(out), label
+        except Exception as e:
+            print(f"\n  [{label}] Chapters failed: {e}")
+    return None, None
+
+
 # ---------------------------------------------------------------- live capture helpers
 def stamped_from_entries(entries):
     lines, prev = [], None
@@ -1666,6 +1733,46 @@ def _sub_text(text, width=42):
     return chr(10).join(lines)
 
 
+def _split_cue(a, b, text, words, max_chars=84, max_sec=7.0):
+    """A long segment becomes several cues, split at the pauses between words (needs word timings)."""
+    if not words or (len(text) <= max_chars and b - a <= max_sec):
+        return [(a, b, text)]
+    label = ""
+    m = re.match(r"^(Speaker \d+: )", text)
+    if m:
+        label = m.group(1)
+    out, cur, start = [], [], words[0][0]
+    for i, (ws, we, w, _p) in enumerate(words):
+        cur.append(w)
+        gap = (words[i + 1][0] - we) if i + 1 < len(words) else 9.0
+        line = " ".join(cur)
+        full = len(line) >= max_chars * 0.6 or we - start >= max_sec * 0.6
+        if (gap >= 0.45 and len(line) >= 20) or len(line) >= max_chars or we - start >= max_sec or \
+                (full and w.endswith((".", "?", "!", ","))):
+            out.append((start, we, (label if not out else "") + line))
+            cur, start = [], words[i + 1][0] if i + 1 < len(words) else we
+    if cur:
+        out.append((start, words[-1][1], (label if not out else "") + " ".join(cur)))
+    return out or [(a, b, text)]
+
+
+def write_words_csv(path, segs):
+    """Every word with its start/end time, confidence and speaker (when known)."""
+    rows = ["start,end,word,confidence,speaker"]
+    for seg in segs:
+        words = seg[3] if len(seg) > 3 else None
+        if not words:
+            continue
+        m = re.match(r"^Speaker (\d+): ", seg[2])
+        who = f"Speaker {m.group(1)}" if m else ""
+        for ws, we, w, p in words:
+            rows.append(f"{ws:.2f},{we:.2f},\"{w.replace(chr(34), chr(34) * 2)}\",{p:.2f},{who}")
+    if len(rows) > 1:
+        Path(path).write_text(chr(10).join(rows) + chr(10), encoding="utf-8-sig")
+        return Path(path)
+    return None
+
+
 def write_subtitles(base_path, segs, fmts):
     """segs = [(start, end, text)]. Writes base_path.srt and/or .vtt per `fmts` (e.g. 'srt', 'vtt', 'both').
     Returns the files written."""
@@ -1674,12 +1781,17 @@ def write_subtitles(base_path, segs, fmts):
     out = []
     nl = chr(10)
     cues = []
-    for i, (a, b, text) in enumerate(segs):
+    for i, seg in enumerate(segs):
+        a, b, text = seg[:3]
         nxt = segs[i + 1][0] if i + 1 < len(segs) else None
-        b = max(b, a + 0.8)
-        if nxt is not None and b > nxt:
-            b = max(nxt - 0.02, a + 0.3)
-        cues.append((a, b, _sub_text(text)))
+        parts = _split_cue(a, b, text, seg[3] if len(seg) > 3 else None)
+        for k, (pa, pb, pt) in enumerate(parts):
+            last = k == len(parts) - 1
+            pb = max(pb, pa + 0.8)
+            lim = nxt if last else parts[k + 1][0]
+            if lim is not None and pb > lim:
+                pb = max(lim - 0.02, pa + 0.3)
+            cues.append((pa, pb, _sub_text(pt)))
     if fmts in ("srt", "both"):
         p = Path(f"{base_path}.srt")
         p.write_text(nl.join(f"{i}{nl}{_sub_time(a, True)} --> {_sub_time(b, True)}{nl}{t}{nl}"
@@ -1891,7 +2003,8 @@ def _process(vpath, audio_src, offset, clip, cfg, model, online, kind, source, o
     raw_stamped, _, info, stamped, dropped, marked, raw_segs = transcribe(
         model, audio_src, cfg["language"],
         multilingual=(mixed and cfg["language"] is None),
-        detections=detections if mixed else None, offset=offset, noisy=noisy, diar=diar)
+        detections=detections if mixed else None, offset=offset, noisy=noisy, diar=diar,
+        words=bool(cfg.get("word_timing")))
     body = "\n".join(stamped)
 
     if not used:
@@ -1925,6 +2038,10 @@ def _process(vpath, audio_src, offset, clip, cfg, model, online, kind, source, o
     write_transcript(orig_file, vpath.name, lang_line, info.duration, exact,
                      note + "Exact transcript: every word as the speech model heard it, nothing removed." + chr(10))
     files.append(orig_file)
+    wf = write_words_csv(out_dir / f"{base}_words.csv", raw_segs) if cfg.get("word_timing") else None
+    if wf:
+        files.append(wf)
+        print(f"Word timings saved: {wf}")
     subs = cfg.get("subtitles", "srt")
     for f in write_subtitles(out_dir / f"{base}_subtitles", raw_segs, subs):
         files.append(f)
@@ -1977,6 +2094,20 @@ def _process(vpath, audio_src, offset, clip, cfg, model, online, kind, source, o
                 print(f"  Speech saved: {sp}  ({info_})\n")
             else:
                 print(f"  [!] {info_}\n")
+
+    # ---- Chapters + key points (written once, in the first output language)
+    if cfg.get("chapters") and body:
+        ch_lang = targets[0][0] if targets else main_name
+        print(f"Finding chapters and key points ({ch_lang})...")
+        md, by = make_chapters(body, info.duration, ch_lang, online)
+        if md:
+            f = out_dir / f"{base}_chapters.md"
+            f.write_text(f"# Chapters and key points: {vpath.name}" + chr(10) + chr(10) + md + chr(10) + chr(10) +
+                         f"---{chr(10)}_{lang_line}. Made by: {by}_{chr(10)}", encoding="utf-8")
+            files.append(f)
+            print(f"Chapters saved: {f}" + chr(10))
+        else:
+            print("  [!] Could not make chapters (needs Claude Code, Ollama or LM Studio)." + chr(10))
 
     # ---- Summaries
     summaries = []

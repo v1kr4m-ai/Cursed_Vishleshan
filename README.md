@@ -48,6 +48,8 @@ A Windows desktop app that **transcribes, translates and summarizes** video, aud
 - **Custom vocabulary** (names, terms, abbreviations) that Whisper is nudged toward and that translations/summaries keep.
 - Hallucination and repetition filtering on silent or noisy stretches.
 - **Speaker labels:** optional *Speakers* setting (Off / Auto-detect / 2-6) adds `Speaker 1:`, `Speaker 2:` to the transcript, subtitles and summaries. Runs offline with sherpa-onnx; two small models (~46 MB) download once.
+- **Chapters & key points:** optional checkbox on Home. Writes `<name>_chapters.md` with timestamped chapters (YouTube-style list) and key points under each, in the first output language. Uses the summary AI, so it adds time.
+- **Word timing:** optional checkbox. Writes `<name>_words.csv` (every word with start/end time, confidence, speaker) and cuts long subtitle cues at natural pauses.
 - **Subtitles:** `.srt` and/or `.vtt` for the original and every translation.
 - **Speech speed:** slow fast speech (songs, rap) down to 85-50% before recognition, pitch kept; timestamps stay in original time.
 
@@ -202,6 +204,7 @@ Next to each source file:
 |---|---|
 | `<name>_transcript.txt` | **Exact transcript** in the original language: every word as Whisper heard it, nothing removed or marked |
 | `<name>_subtitles[_<Language>].srt` / `.vtt` | Subtitle files (setting on Home) |
+| `<name>_chapters.md` / `<name>_words.csv` | Chapters + key points / word timings (optional, Home) |
 | `<name>_transcript_filtered.txt` | Extra copy (only written when it differs): made-up / repeated lines removed, `[unclear]` marks. Translations and summaries are made from this copy |
 | `<name>_transcript_<Language>.txt` | One per chosen translation |
 | `<name>_summary[_<Language>].md` | Summary (per language) |

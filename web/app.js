@@ -36,6 +36,8 @@ const MOCK_HOME = {
   mode: "file",
   skipDone: true,
   subtitles: "srt",
+  chapters: false,
+  wordTiming: false,
   subfolders: false,
   speakSave: false,
   onlineReal: true,
@@ -407,6 +409,13 @@ function renderSources() {
   }));
   document.getElementById("urlRow").style.display = state.mode === "url" ? "flex" : "none";
   document.getElementById("skipDone").checked = state.skipDone;
+  const chk = (id, key) => {
+    const el = document.getElementById(id);
+    el.checked = !!state[key];
+    el.onchange = () => { state[key] = el.checked; persistHome(); };
+  };
+  chk("chaptersChk", "chapters");
+  chk("wordsChk", "wordTiming");
   const subsSel = document.getElementById("subsSelect");
   subsSel.value = state.subtitles || "srt";
   subsSel.onchange = () => { state.subtitles = subsSel.value; persistHome(); };
@@ -466,6 +475,8 @@ function persistHome() {
     mode: state.mode,
     skipDone: document.getElementById("skipDone").checked,
     subtitles: state.subtitles,
+    chapters: state.chapters,
+    wordTiming: state.wordTiming,
     subfolders: document.getElementById("subfolders").checked,
     speakSave: state.speakSave,
   });
@@ -825,7 +836,7 @@ function renderHistoryText(text) {
   const media = document.getElementById("historyMedia");
   text.split(String.fromCharCode(10)).forEach((line) => {
     const div = document.createElement("div");
-    const m = /^\[(\d\d):(\d\d):(\d\d)\]/.exec(line);
+    const m = /^[\s#*-]*\[?(\d\d):(\d\d):(\d\d)\]?/.exec(line);
     div.textContent = line || " ";
     if (m && historySelected && historySelected.media) {
       div.className = "tline";
