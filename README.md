@@ -94,6 +94,7 @@ Applied automatically to every feature and also available as a standalone tool.
 - **Drag and drop:** drop video/audio files (several at once) or a folder anywhere on the window to start File / Folder jobs.
 - **Stop any job:** every job panel has a **Stop** button. A waiting job leaves the queue; a running one stops within moments (its ffmpeg / helper programs are ended too) and the next queued job starts.
 - **One tab per tool run:** every file / folder / link / watch / live / cleanup / music run opens its own tab in the top bar. Closing a tab closes a live session or stops a watch job.
+- **Click to play:** in History, timestamped transcript lines are clickable and play the original recording from that point (video or audio; formats the built-in player can't handle are converted to a small mp3 in `Documents\Cursed_Vishleshan\cache`). The line being played is highlighted.
 - **History:** searchable list of everything processed, with preview, open file, show in folder and remove.
 - Read-aloud: Microsoft neural voices online (edge-tts), built-in Windows voices offline.
 - Keeps Windows awake during long batch jobs.

@@ -185,7 +185,11 @@
         <div class="rowflex" style="margin-bottom:10px;">
           <select id="historyFileSelect" class="select"></select>
         </div>
-        <pre class="historytext" id="historyText"></pre>
+        <div class="historyplayer" id="historyPlayer" style="display:none;">
+          <video id="historyMedia" controls preload="metadata"></video>
+          <div class="muted small">Click a timestamped line to play from there.</div>
+        </div>
+        <div class="historytext" id="historyText"></div>
         <div class="rowflex" style="margin-top:12px;">
           <button class="startbtn small" id="historyOpenBtn">Open file</button>
           <button class="ghostbtn" id="historyFolderBtn">Show in folder</button>

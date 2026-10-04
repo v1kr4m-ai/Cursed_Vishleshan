@@ -63,7 +63,7 @@ const MOCK_OFFLINE = {
   lmstudioModels: [], lmstudioErr: "LM Studio server not running.", lmstudioPicked: "",
 };
 const MOCK_HISTORY = [
-  { time: "2026-09-20T10:00:00", title: "Team meeting", when: "20 Sep 2026 10:00", kind: "Video",
+  { time: "2026-09-20T10:00:00", title: "Team meeting", media: { path: "C:/fake/meeting.mp4", kind: "video" }, when: "20 Sep 2026 10:00", kind: "Video",
     languages: "English", length: "00:12:30",
     files: [{ path: "C:/fake/meeting_transcript.txt", name: "meeting_transcript.txt" }], exists: true },
 ];
@@ -80,7 +80,10 @@ function callApi(name, ...args) {
   if (name === "get_voice_cleanup") return Promise.resolve(MOCK_CLEANUP);
   if (name === "get_offline_settings") return Promise.resolve(MOCK_OFFLINE);
   if (name === "get_history") return Promise.resolve(MOCK_HISTORY);
-  if (name === "read_history_file") return Promise.resolve("(mock file contents)");
+  if (name === "read_history_file") return Promise.resolve(["Transcript of: meeting.mp4", "", "===== TIMESTAMPED =====",
+    "[00:00:00] Speaker 1: Good morning everyone.", "[00:00:05] Speaker 2: Thanks. The budget is on track.",
+    "[00:00:11] Speaker 1: Understood.", "", "===== PLAIN TEXT =====", "Good morning everyone."].join(String.fromCharCode(10)));
+  if (name === "get_media_url") return Promise.resolve("");
   if (name === "pick_file") return Promise.resolve("C:/fake/song.mp3");
   if (name === "pick_folder") return Promise.resolve("C:/fake/out");
   if (name === "start_job") return Promise.resolve({
@@ -804,15 +807,76 @@ function selectHistory(i) {
   const sel = document.getElementById("historyFileSelect");
   sel.innerHTML = historySelected.files.map((f) => `<option>${f.name}</option>`).join("");
   sel.onchange = showHistoryFile;
+  setupHistoryPlayer();
   showHistoryFile();
 }
 
 async function showHistoryFile() {
   const sel = document.getElementById("historyFileSelect");
   const f = historySelected.files.find((x) => x.name === sel.value) || historySelected.files[0];
-  const text = f ? await callApi("read_history_file", f.path) : "";
-  document.getElementById("historyText").textContent = text || historySelected.details || "";
+  const text = (f ? await callApi("read_history_file", f.path) : "") || historySelected.details || "";
+  renderHistoryText(text);
 }
+
+// Timestamped transcript lines ("[00:01:23] ...") become clickable: they play the recording from there.
+function renderHistoryText(text) {
+  const box = document.getElementById("historyText");
+  box.textContent = "";
+  const media = document.getElementById("historyMedia");
+  text.split(String.fromCharCode(10)).forEach((line) => {
+    const div = document.createElement("div");
+    const m = /^\[(\d\d):(\d\d):(\d\d)\]/.exec(line);
+    div.textContent = line || " ";
+    if (m && historySelected && historySelected.media) {
+      div.className = "tline";
+      div.dataset.t = String(+m[1] * 3600 + +m[2] * 60 + +m[3]);
+      div.title = "Play from here";
+      div.addEventListener("click", async () => {
+        await ensureHistoryMedia();
+        media.currentTime = +div.dataset.t;
+        media.play().catch(() => {});
+      });
+    }
+    box.appendChild(div);
+  });
+}
+
+let mediaFor = null, mediaConverted = false;
+async function ensureHistoryMedia(force) {
+  const media = document.getElementById("historyMedia");
+  const path = historySelected.media.path;
+  if (mediaFor === path && !force) return;
+  mediaFor = path; mediaConverted = !!force;
+  const url = await callApi("get_media_url", path, !!force);
+  if (url) media.src = url;
+}
+
+function setupHistoryPlayer() {
+  const player = document.getElementById("historyPlayer");
+  const media = document.getElementById("historyMedia");
+  media.pause(); media.removeAttribute("src"); media.load(); mediaFor = null;
+  const m = historySelected.media;
+  player.style.display = m ? "" : "none";
+  media.classList.toggle("audio", !!m && m.kind === "audio");
+  if (m) ensureHistoryMedia();
+}
+
+(function wireHistoryPlayer() {
+  const media = document.getElementById("historyMedia");
+  // the player can't handle every format: on an error retry once with a converted audio copy
+  media.addEventListener("error", () => {
+    if (historySelected && historySelected.media && !mediaConverted && media.getAttribute("src")) {
+      ensureHistoryMedia(true);
+    }
+  });
+  media.addEventListener("timeupdate", () => {
+    const lines = [...document.querySelectorAll("#historyText .tline")];
+    let cur = null;
+    for (const l of lines) { if (+l.dataset.t <= media.currentTime + 0.25) cur = l; else break; }
+    lines.forEach((l) => l.classList.toggle("playing", l === cur));
+    if (cur && !media.paused) cur.scrollIntoView({ block: "nearest" });
+  });
+})();
 
 document.getElementById("historyOpenBtn")?.addEventListener("click", () => {
   const sel = document.getElementById("historyFileSelect");

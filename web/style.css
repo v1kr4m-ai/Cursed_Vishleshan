@@ -446,3 +446,12 @@ html, body {
 .dropveil.show { display: flex; }
 .dropveil > div { padding: 34px 46px; border-radius: 26px; background: #fff; font-size: 18px; font-weight: 700; color: #16181d;
   border: 3px dashed #f5b82e; box-shadow: 0 20px 60px rgba(0,0,0,.3); }
+
+/* Round 8: History player - click a transcript line to play from there */
+.historyplayer { margin-bottom: 10px; }
+.historyplayer video { width: 100%; max-height: 220px; border-radius: 12px; background: #16181d; display: block; }
+.historyplayer video.audio { height: 44px; background: transparent; }
+.historyplayer .muted { margin-top: 4px; }
+.historytext .tline { cursor: pointer; border-radius: 6px; padding: 0 6px; margin: 0 -6px; }
+.historytext .tline:hover { background: #fff3d6; }
+.historytext .tline.playing { background: #ffe29a; font-weight: 600; }

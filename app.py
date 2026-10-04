@@ -10,6 +10,7 @@ picker, settings persistence). Job dispatch (Start) is a stub until Stage 3.
 """
 import contextlib
 import datetime
+import hashlib
 import sys
 from pathlib import Path
 
@@ -200,6 +201,94 @@ def _caption_close():
             w.destroy()
         except Exception:
             pass
+
+
+class _MediaServer:
+    """Tiny loopback-only web server so the page's <video> can play local recordings (the page itself is
+    served over http, which browsers don't let load file:// URLs). Only files registered through
+    url_for() are served, under an unguessable token, with Range support so seeking works."""
+    _inst = None
+
+    def __init__(self):
+        import http.server
+        import mimetypes
+        import os
+        import re
+        import secrets
+        files = self.files = {}
+        self._secrets = secrets
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _serve(self, head):
+                tok = self.path.split("/")[-1].split("?")[0]
+                path = files.get(tok)
+                if not path or not os.path.exists(path):
+                    self.send_error(404)
+                    return
+                size = os.path.getsize(path)
+                start, end = 0, size - 1
+                m = re.match(r"bytes=(\d*)-(\d*)", self.headers.get("Range", ""))
+                if m and (m.group(1) or m.group(2)):
+                    if m.group(1):
+                        start = int(m.group(1))
+                        end = int(m.group(2)) if m.group(2) else size - 1
+                    else:
+                        start = max(size - int(m.group(2)), 0)
+                    end = min(end, size - 1)
+                    self.send_response(206)
+                    self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+                else:
+                    self.send_response(200)
+                self.send_header("Content-Type", mimetypes.guess_type(path)[0] or "application/octet-stream")
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Content-Length", str(end - start + 1))
+                self.end_headers()
+                if head:
+                    return
+                try:
+                    with open(path, "rb") as f:
+                        f.seek(start)
+                        left = end - start + 1
+                        while left > 0:
+                            chunk = f.read(min(1 << 16, left))
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                            left -= len(chunk)
+                except (ConnectionError, OSError):
+                    pass
+
+            def do_GET(self):
+                self._serve(False)
+
+            def do_HEAD(self):
+                self._serve(True)
+
+        self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    @classmethod
+    def url_for(cls, path):
+        self = cls._inst = cls._inst or cls()
+        tok = next((t for t, p in self.files.items() if p == str(path)), None) or self._secrets.token_hex(12)
+        self.files[tok] = str(path)
+        return f"http://127.0.0.1:{self.httpd.server_address[1]}/media/{tok}"
+
+
+_PLAYABLE = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".flac", ".mp4", ".m4v", ".webm"}
+_VIDEO = {".mp4", ".m4v", ".webm", ".mkv", ".mov", ".avi", ".wmv", ".flv", ".mpg", ".mpeg", ".3gp"}
+
+
+def _history_media(e):
+    """The recording a history entry came from (so the preview can play it), if it still exists."""
+    for f in reversed(e.get("files", [])):
+        p = Path(f)
+        if p.suffix.lower() in vs.BATCH_EXTENSIONS and p.exists():
+            return {"path": str(p), "kind": "video" if p.suffix.lower() in _VIDEO else "audio"}
+    return None
 
 
 class Api:
@@ -640,9 +729,32 @@ class Api:
                 "languages": e.get("languages", ""), "length": vs.fmt(e.get("duration") or 0),
                 "files": [{"path": f, "name": Path(f).name} for f in shown(e)],
                 "details": e.get("details", ""),
+                "media": _history_media(e),
                 "exists": any(Path(f).exists() for f in e.get("files", [])),
             })
         return out
+
+    def get_media_url(self, path, force_convert=False):
+        """A URL the page's audio/video player can play for this recording. Formats the player can't
+        handle (or a failed attempt, force_convert) are turned into a small mp3 in the cache folder."""
+        p = Path(path)
+        if not p.exists():
+            return ""
+        if not force_convert and p.suffix.lower() in _PLAYABLE:
+            return _MediaServer.url_for(p)
+        cache = vs.SAVE_DIR / "cache"
+        cache.mkdir(parents=True, exist_ok=True)
+        key = hashlib.md5(f"{p}|{p.stat().st_mtime_ns}".encode()).hexdigest()[:16]
+        out = cache / f"{p.stem[:40]}_{key}.mp3"
+        if not out.exists():
+            ff = shutil.which("ffmpeg")
+            if not ff:
+                return ""
+            r = subprocess.run([ff, "-hide_banner", "-loglevel", "error", "-y", "-i", str(p), "-vn",
+                                "-ac", "1", "-b:a", "64k", str(out)], capture_output=True)
+            if r.returncode != 0 or not out.exists():
+                return ""
+        return _MediaServer.url_for(out)
 
     def read_history_file(self, path):
         if not str(path).lower().endswith((".txt", ".md")):
