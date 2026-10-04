@@ -1145,6 +1145,113 @@ class LoopGuard:
         return self.n >= 2
 
 
+# ---------------------------------------------------------------- speaker labels (diarization)
+# Offline: sherpa-onnx runs a small speaker-segmentation model + a speaker-embedding model on the CPU.
+# The two models (about 46 MB) are downloaded once into Documents/Cursed_Vishleshan/models/diarization.
+SPEAKER_CHOICES = [("Off", "off"), ("Auto-detect", "auto"), ("2 speakers", "2"), ("3 speakers", "3"),
+                   ("4 speakers", "4"), ("5 speakers", "5"), ("6 speakers", "6")]
+_DIAR_BASE = "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+_DIAR_SEG_URL = _DIAR_BASE + "speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2"
+_DIAR_EMB_URL = (_DIAR_BASE + "speaker-recongition-models/"
+                 "3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx")
+
+
+def diarization_ready():
+    d = SAVE_DIR / "models" / "diarization"
+    return (d / "segmentation.onnx").exists() and (d / "embedding.onnx").exists()
+
+
+def _fetch(url, dest):
+    print(f"  Downloading {dest.name} ...")
+    req = urllib.request.Request(url, headers={"User-Agent": "video-summarizer"})
+    with urllib.request.urlopen(req, timeout=60) as r, open(str(dest) + ".part", "wb") as f:
+        shutil.copyfileobj(r, f)
+    os.replace(str(dest) + ".part", dest)
+
+
+def ensure_diarization_models(online):
+    d = SAVE_DIR / "models" / "diarization"
+    seg, emb = d / "segmentation.onnx", d / "embedding.onnx"
+    if seg.exists() and emb.exists():
+        return seg, emb
+    if not online:
+        print("  [!] Speaker labels need a one-time download of two small models (about 46 MB) - "
+              "connect to the internet once.")
+        return None
+    try:
+        import tarfile
+        d.mkdir(parents=True, exist_ok=True)
+        if not seg.exists():
+            tar = d / "seg.tar.bz2"
+            _fetch(_DIAR_SEG_URL, tar)
+            with tarfile.open(tar) as t:
+                member = next(m for m in t.getmembers() if m.name.endswith("model.onnx"))
+                with t.extractfile(member) as src, open(seg, "wb") as out:
+                    shutil.copyfileobj(src, out)
+            tar.unlink()
+        if not emb.exists():
+            _fetch(_DIAR_EMB_URL, emb)
+        return seg, emb
+    except Exception as e:
+        print(f"  [!] Could not download the speaker models: {str(e)[:150]}")
+        return None
+
+
+def diarize(audio_path, speakers, online):
+    """Who spoke when. Returns [(start_sec, end_sec, speaker_number)] in the audio's own time
+    (speaker numbers start at 1, in order of first appearance), or [] if unavailable / one speaker."""
+    if speakers in (None, "", "off"):
+        return []
+    try:
+        import sherpa_onnx
+    except ImportError:
+        print("  [!] Speaker labels need one more library. Run:  pip install sherpa-onnx")
+        return []
+    models = ensure_diarization_models(online)
+    if not models:
+        return []
+    print("Finding who speaks when...")
+    try:
+        from faster_whisper.audio import decode_audio
+        n = int(speakers) if str(speakers).isdigit() else -1
+        cfg = sherpa_onnx.OfflineSpeakerDiarizationConfig(
+            segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
+                pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(model=str(models[0])),
+                num_threads=4),
+            embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=str(models[1]), num_threads=4),
+            clustering=sherpa_onnx.FastClusteringConfig(num_clusters=n, threshold=0.5),
+            min_duration_on=0.3, min_duration_off=0.5)
+        sd = sherpa_onnx.OfflineSpeakerDiarization(cfg)
+        audio = decode_audio(str(audio_path), sampling_rate=sd.sample_rate)
+        result = sd.process(audio).sort_by_start_time()
+    except Exception as e:
+        print(f"  [!] Speaker detection failed: {str(e)[:150]}")
+        return []
+    order, out = {}, []
+    for r in result:
+        order.setdefault(r.speaker, len(order) + 1)
+        out.append((r.start, r.end, order[r.speaker]))
+    if len(order) < 2:
+        print("  Only one speaker found - no labels added.")
+        return []
+    print(f"  {len(order)} speakers found.")
+    return out
+
+
+def speaker_at(diar, t0, t1):
+    """The speaker whose turns overlap [t0, t1] the most (None if nobody does)."""
+    best, score = None, 0.0
+    tot = {}
+    for a, b, spk in diar:
+        ov = min(b, t1) - max(a, t0)
+        if ov > 0:
+            tot[spk] = tot.get(spk, 0.0) + ov
+    for spk, ov in tot.items():
+        if ov > score:
+            best, score = spk, ov
+    return best
+
+
 def _scaled_info(info):
     """Whisper info for slowed audio, with the duration put back to original-recording time."""
     if _SPEED >= 1.0:
@@ -1154,7 +1261,7 @@ def _scaled_info(info):
                                  language_probability=info.language_probability)
 
 
-def transcribe(model, video, language, multilingual=False, detections=None, offset=0.0, noisy=False):
+def transcribe(model, video, language, multilingual=False, detections=None, offset=0.0, noisy=False, diar=None):
     """offset = where the audio starts inside the full video (clip range), added to timestamps."""
     kwargs = {"language": language, "task": "transcribe"}
     if multilingual and "multilingual" in inspect.signature(model.transcribe).parameters:
@@ -1178,6 +1285,9 @@ def transcribe(model, video, language, multilingual=False, detections=None, offs
             rcode = detections[max(0, sum(1 for d in det_times if d <= rt) - 1)][1]
         rpre = f"({lang_name(rcode)}) " if rcode and rcode != rprev else ""
         rprev = rcode or rprev
+        spk = speaker_at(diar, rt, seg.end * _SPEED + offset) if diar else None
+        if spk:
+            text = f"Speaker {spk}: {text}"
         raw_stamped.append(f"[{fmt(rt)}] {rpre}{text}")
         raw_plain.append(text)
         raw_segs.append((rt, seg.end * _SPEED + offset, text))
@@ -1229,7 +1339,7 @@ def extract_frames(video: str, duration: float, outdir: Path, start=0.0):
         cmd += ["-ss", f"{start:.3f}"]
     cmd += ["-i", video, "-t", f"{duration:.3f}", "-vf", f"fps=1/{interval:.3f},scale=768:-2",
             "-frames:v", str(MAX_FRAMES), str(outdir / "frame_%03d.jpg")]
-    subprocess.run(cmd, check=False)
+    subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return sorted(outdir.glob("frame_*.jpg")), interval
 
 
@@ -1518,7 +1628,7 @@ def translate_transcript(transcript, target, online):
                 out.append(fn(system,
                     f"Translate this timestamped video transcript into {target}.\n"
                     f"Rules: keep every [HH:MM:SS] timestamp at the start of its line, keep one "
-                    f"output line per input line, drop the (Language) markers, and output ONLY "
+                    f"output line per input line, drop the (Language) markers, keep any \"Speaker N:\" labels exactly as written, and output ONLY "
                     f"the translated lines - no notes or explanations.{vocab_note()}\n\n{ch}"))
             print()
             return "\n".join(o.strip() for o in out), label
@@ -1773,11 +1883,15 @@ def _process(vpath, audio_src, offset, clip, cfg, model, online, kind, source, o
         if mixed:
             print("This video mixes languages - each part will be transcribed in its own language.\n")
 
+    # ---- Who speaks when (optional)
+    diar = [(a * _SPEED + offset, b * _SPEED + offset, s)
+            for a, b, s in diarize(audio_src, cfg.get("speakers", "off"), online)]
+
     # ---- Original transcript
     raw_stamped, _, info, stamped, dropped, marked, raw_segs = transcribe(
         model, audio_src, cfg["language"],
         multilingual=(mixed and cfg["language"] is None),
-        detections=detections if mixed else None, offset=offset, noisy=noisy)
+        detections=detections if mixed else None, offset=offset, noisy=noisy, diar=diar)
     body = "\n".join(stamped)
 
     if not used:
@@ -1794,6 +1908,8 @@ def _process(vpath, audio_src, offset, clip, cfg, model, online, kind, source, o
         end = offset + info.duration
         base += f"_part_{fmt(offset).replace(':', '-')}_to_{fmt(end).replace(':', '-')}"
         note = f"Part of the video: {fmt(offset)} to {fmt(end)}\n"
+    if diar:
+        note += f"Speaker labels: {len({s for _, _, s in diar})} speakers detected automatically (they may be imperfect)" + chr(10)
     if _SPEED < 1.0:
         note += f"Audio slowed to {_SPEED:.0%} speed for recognition (timestamps are original time)\n"
     if noisy:

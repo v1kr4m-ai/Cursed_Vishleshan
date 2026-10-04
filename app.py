@@ -213,6 +213,8 @@ class Api:
             "subfolders": bool(saved.get("subfolders", False)),
             "speakSave": bool(saved.get("speak_save", False)),
             "subtitles": saved.get("subtitles", "srt"),
+            "speakerChoices": [n for n, _ in vs.SPEAKER_CHOICES],
+            "speakers": next((n for n, v in vs.SPEAKER_CHOICES if v == saved.get("speakers", "off")), "Off"),
             "onlineReal": online0,
             "onlinePref": bool(saved.get("mode_online", online0)),
             "noiseLabel": _noise_label(saved.get("noise", "off")),
@@ -230,6 +232,7 @@ class Api:
             "skip_done": bool(data.get("skipDone", True)),
             "subfolders": bool(data.get("subfolders", False)),
             "speak_save": bool(data.get("speakSave", False)),
+            "speakers": dict(vs.SPEAKER_CHOICES).get(data.get("speakers"), "off"),
             "subtitles": data.get("subtitles", "srt") if data.get("subtitles") in ("none", "srt", "vtt", "both") else "srt",
         })
         vs.save_settings(s)

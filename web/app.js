@@ -28,6 +28,8 @@ const MOCK_HOME = {
   spokenLanguage: "Auto-detect",
   speedChoices: ["Normal", "Slightly slower (85%)", "Slower (75%)", "Much slower (65%)", "Half speed (50%)"],
   speed: "Normal",
+  speakerChoices: ["Off", "Auto-detect", "2 speakers", "3 speakers", "4 speakers", "5 speakers", "6 speakers"],
+  speakers: "Off",
   spokenChoices: ["Auto-detect", "English", "Hindi", "Urdu", "French", "German", "Spanish"],
   outputChoices: ["Original", "English", "Hindi", "Urdu", "French", "German", "Spanish"],
   outputs: ["Original", "English"],
@@ -349,6 +351,9 @@ function renderSpoken() {
   const sp = document.getElementById("speedSelect");
   sp.innerHTML = state.speedChoices.map((c) => `<option ${c === state.speed ? "selected" : ""}>${c}</option>`).join("");
   sp.addEventListener("change", () => { state.speed = sp.value; persistHome(); });
+  const sk = document.getElementById("speakerSelect");
+  sk.innerHTML = state.speakerChoices.map((c) => `<option ${c === state.speakers ? "selected" : ""}>${c}</option>`).join("");
+  sk.addEventListener("change", () => { state.speakers = sk.value; persistHome(); });
 }
 
 // Output languages: same stack-of-cards behaviour as the model deck (hover peeks, click pins open)
@@ -453,6 +458,7 @@ function persistHome() {
     model: state.selectedModel,
     spokenLanguage: state.spokenLanguage,
     speed: state.speed,
+    speakers: state.speakers,
     outputs: state.outputs,
     mode: state.mode,
     skipDone: document.getElementById("skipDone").checked,

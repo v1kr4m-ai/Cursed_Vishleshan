@@ -47,6 +47,8 @@ A Windows desktop app that **transcribes, translates and summarizes** video, aud
 - **Spoken-language detection** over the whole recording. Mixed-language audio is transcribed piece by piece in each detected language.
 - **Custom vocabulary** (names, terms, abbreviations) that Whisper is nudged toward and that translations/summaries keep.
 - Hallucination and repetition filtering on silent or noisy stretches.
+- **Speaker labels:** optional *Speakers* setting (Off / Auto-detect / 2-6) adds `Speaker 1:`, `Speaker 2:` to the transcript, subtitles and summaries. Runs offline with sherpa-onnx; two small models (~46 MB) download once.
+- **Subtitles:** `.srt` and/or `.vtt` for the original and every translation.
 - **Speech speed:** slow fast speech (songs, rap) down to 85-50% before recognition, pitch kept; timestamps stay in original time.
 
 ### Translation and summaries
@@ -196,6 +198,7 @@ Next to each source file:
 | File | Content |
 |---|---|
 | `<name>_transcript.txt` | **Exact transcript** in the original language: every word as Whisper heard it, nothing removed or marked |
+| `<name>_subtitles[_<Language>].srt` / `.vtt` | Subtitle files (setting on Home) |
 | `<name>_transcript_filtered.txt` | Extra copy (only written when it differs): made-up / repeated lines removed, `[unclear]` marks. Translations and summaries are made from this copy |
 | `<name>_transcript_<Language>.txt` | One per chosen translation |
 | `<name>_summary[_<Language>].md` | Summary (per language) |

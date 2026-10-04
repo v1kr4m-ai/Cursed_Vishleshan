@@ -33,3 +33,6 @@ noisereduce
 # Not pip-installable: DeepFilterNet's Python package (deepfilternet) needs a Rust/Cargo
 # toolchain to build from source. The app doesn't need it - it downloads a standalone
 # deep-filter.exe from GitHub automatically the first time Studio AI mode runs.
+
+# ---- Optional: speaker labels (offline speaker detection) ----
+sherpa-onnx==1.13.8
