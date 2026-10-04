@@ -11,6 +11,7 @@ picker, settings persistence). Job dispatch (Start) is a stub until Stage 3.
 import contextlib
 import datetime
 import hashlib
+import json
 import re
 import sys
 from pathlib import Path
@@ -122,6 +123,45 @@ def _run_job(target_fn, *args, **kwargs):
         _WORKER = threading.Thread(target=_queue_worker, daemon=True)
         _WORKER.start()
     return job_id
+
+
+# ---------------------------------------------------------------- persistent job queue
+# Every queued/running job is written to queue.json and removed when it ends or is stopped. If the app
+# dies or is quit with jobs left, the next start offers to resume them.
+_QLOCK = threading.Lock()
+INTERRUPTED = []   # jobs found in queue.json at startup
+
+
+def _qfile():
+    return vs.SAVE_DIR / "queue.json"
+
+
+def _qread():
+    try:
+        return json.loads(_qfile().read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+
+def _qwrite(items):
+    try:
+        _qfile().parent.mkdir(parents=True, exist_ok=True)
+        _qfile().write_text(json.dumps(items, ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _qadd(job_id, api, args, title):
+    with _QLOCK:
+        items = _qread()
+        items.append({"id": job_id, "api": api, "args": args, "title": title})
+        _qwrite(items)
+
+
+def _qremove(job_id):
+    with _QLOCK:
+        items = [i for i in _qread() if i.get("id") != job_id]
+        _qwrite(items)
 
 
 # ---------------------------------------------------------------- tray icon + notifications
@@ -259,6 +299,7 @@ def _queue_worker():
             finally:
                 _CURRENT.update(job=None, tid=None)
                 JOBS[job_id]["done"] = True
+            _qremove(job_id)
             _job_finished_notice(job_id, outcome)
         except JobCancelled:
             pass   # Stop arrived just as the job was finishing
@@ -540,6 +581,8 @@ class Api:
         res = self._start_job(payload)
         if isinstance(res, dict) and res.get("jobId") in JOBS:
             JOBS[res["jobId"]]["title"] = res.get("title", "")
+            if payload.get("mode") in ("file", "folder", "url"):
+                _qadd(res["jobId"], "start_job", [dict(payload)], res.get("title", ""))
         return res
 
     def _start_job(self, payload):
@@ -581,6 +624,7 @@ class Api:
             video = payload.get("path") or self.pick_file()
             if not video:
                 return {"ok": False, "message": "No file selected."}
+            payload["path"] = str(video)
             job_id = _run_job(_with_model, s["model"], lambda m: vs.process_video(
                 Path(video), s, m, online, kind="file", source=None, open_result=True))
             return {"ok": True, "jobId": job_id, "title": f"File: {Path(video).name}"}
@@ -589,6 +633,7 @@ class Api:
             folder = payload.get("path") or self.pick_folder()
             if not folder:
                 return {"ok": False, "message": "No folder selected."}
+            payload["path"] = str(folder)
             report_dir = Path(folder)
             out_root = Path(s["output_dir"]) if s.get("output_dir") else report_dir
             vids = vs.list_videos(report_dir, s.get("subfolders", False))
@@ -740,6 +785,7 @@ class Api:
                 JOBS[job_id]["lines"].append("Cancelled before it started." + chr(10))
                 JOBS[job_id]["cancelled"] = True
                 JOBS[job_id]["done"] = True
+                _qremove(job_id)
                 return True
         ev = WATCH_EVENTS.get(job_id)
         if ev:
@@ -803,7 +849,39 @@ class Api:
         job_id = _run_job(vs._run_cleanup_job, Path(src_path), out_dir, noise_mode, self._online(),
                           dict(vs.SPEED_CHOICES).get(speed, 1.0), bool(video))
         JOBS[job_id]["title"] = f"Clean up: {Path(src_path).name}"
+        _qadd(job_id, "start_cleanup_job", [str(src_path), str(out_dir), noise_mode, speed, bool(video)],
+              JOBS[job_id]["title"])
         return job_id
+
+    def get_interrupted(self):
+        return [i.get("title", "") for i in INTERRUPTED]
+
+    def discard_interrupted(self):
+        for it in INTERRUPTED:
+            _qremove(it.get("id"))
+        del INTERRUPTED[:]
+        return True
+
+    def resume_interrupted(self):
+        """Start the jobs that were still queued/running when the app last ended. Returns what the page needs to show them."""
+        todo = list(INTERRUPTED)
+        del INTERRUPTED[:]
+        out = []
+        for it in todo:
+            _qremove(it.get("id"))
+            try:
+                res = getattr(self, it["api"])(*it["args"])
+            except Exception as e:
+                out.append({"ok": False, "message": str(e)[:120]})
+                continue
+            if it["api"] == "start_job":
+                res["mode"] = (it["args"][0] or {}).get("mode", "file")
+            elif isinstance(res, dict):
+                res["mode"] = "regen"
+            else:   # cleanup / music return just the job id
+                res = {"ok": True, "jobId": res, "title": it.get("title", ""), "mode": "cleanup"}
+            out.append(res)
+        return out
 
     def report_focus(self, focused):
         _TRAY["focused"] = bool(focused)
@@ -826,6 +904,8 @@ class Api:
         job_id = _run_job(vs._run_stems_job, Path(src_path), out_dir, list(stems or ["instrumental"]),
                           dict(vs.SPEED_CHOICES).get(speed, 1.0))
         JOBS[job_id]["title"] = f"Extract music: {Path(src_path).name}"
+        _qadd(job_id, "start_music_job", [str(src_path), str(out_dir), speed, list(stems or ["instrumental"])],
+              JOBS[job_id]["title"])
         return job_id
 
     # ---------------------------------------------------------------- Offline Settings tab
@@ -970,6 +1050,7 @@ class Api:
         vs.VOCAB = vs.load_vocab()
         job_id = _run_job(vs.regenerate_outputs, Path(path), s, online)
         JOBS[job_id]["title"] = f"Rebuild: {Path(path).name}"
+        _qadd(job_id, "regenerate_transcript", [str(path)], JOBS[job_id]["title"])
         return {"ok": True, "jobId": job_id, "title": f"Rebuild: {Path(path).name}"}
 
     def export_file(self, path, fmt):
@@ -1009,6 +1090,7 @@ class Api:
         return True
 
 def main():
+    INTERRUPTED[:] = _qread()   # stays in queue.json until you resume or discard it
     apply_offline_settings()
     if not vs.internet_ok():
         import os

@@ -1148,6 +1148,29 @@ function wireDrop() {
   }, 700);
 }
 
+// jobs that were still queued / running when the app last ended: offer to resume them
+async function checkInterrupted() {
+  const titles = await callApi("get_interrupted");
+  if (!Array.isArray(titles) || !titles.length) return;
+  const bar = document.createElement("div");
+  bar.className = "resumebar";
+  bar.innerHTML = `<div><b>${titles.length} job${titles.length > 1 ? "s were" : " was"} interrupted last time</b>
+    <span class="muted small">${titles.slice(0, 3).map((t) => t.replace(/</g, "&lt;")).join(" - ")}${titles.length > 3 ? " ..." : ""}</span></div>
+    <div class="rowflex"><button class="startbtn small" data-a="resume">Resume</button><button class="ghostbtn" data-a="discard">Discard</button></div>`;
+  const home = document.getElementById("view-home");
+  home.insertBefore(bar, home.querySelector("h1").nextSibling);
+  bar.querySelector('[data-a="discard"]').onclick = async () => { await callApi("discard_interrupted"); bar.remove(); };
+  bar.querySelector('[data-a="resume"]').onclick = async () => {
+    bar.remove();
+    const results = await callApi("resume_interrupted");
+    for (const res of results || []) {
+      if (!res.ok) { toast(res.message || "Could not resume"); continue; }
+      if (res.mode === "cleanup") addJobPanel(cuQueue(), res.jobId, res.title);
+      else showStartedJob(res, res.mode);
+    }
+  };
+}
+
 async function boot() {
   state = await callApi("get_home_data");
   renderModels();
@@ -1161,6 +1184,7 @@ async function boot() {
   wirePreset();
   wireOutDir();
   wireDrop();
+  checkInterrupted();
 }
 
 boot();
