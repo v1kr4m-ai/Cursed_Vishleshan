@@ -439,3 +439,10 @@ html, body {
 @keyframes gobtn-shine { 0%, 55% { left: -60%; } 100% { left: 140%; } }
 @keyframes gobtn-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .gobtn, .gobtn::after { animation: none; } }
+
+/* Round 7: drag-and-drop veil */
+.dropveil { position: fixed; inset: 0; z-index: 999; display: none; align-items: center; justify-content: center;
+  background: rgba(22,24,29,.55); backdrop-filter: blur(3px); pointer-events: none; }
+.dropveil.show { display: flex; }
+.dropveil > div { padding: 34px 46px; border-radius: 26px; background: #fff; font-size: 18px; font-weight: 700; color: #16181d;
+  border: 3px dashed #f5b82e; box-shadow: 0 20px 60px rgba(0,0,0,.3); }

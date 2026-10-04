@@ -22,6 +22,7 @@ if sys.stdout is None or sys.stderr is None:
 
 # Same reason: without a console of its own, every ffmpeg / claude / lms child process would pop up
 # a console window. Make "no window" the default for all child processes (ours and libraries').
+_PROCS = []   # child processes started since the current job began (Stop ends them)
 if sys.platform == "win32":
     import subprocess
     _popen_init = subprocess.Popen.__init__
@@ -29,6 +30,7 @@ if sys.platform == "win32":
     def _quiet_popen(self, *a, **kw):
         kw["creationflags"] = kw.get("creationflags", 0) | subprocess.CREATE_NO_WINDOW
         _popen_init(self, *a, **kw)
+        _PROCS.append(self)   # so Stop can end the helper program (ffmpeg, claude...) of the running job
     subprocess.Popen.__init__ = _quiet_popen
 
 import shutil
@@ -46,6 +48,7 @@ WEB_DIR = Path(__file__).with_name("web")
 # Background threads write here; the page POLLS these via js_api getters instead of
 # Python pushing into the page (window.evaluate_js() called from a non-GUI thread can
 # deadlock pywebview's EdgeChromium backend - this avoids that class of hang entirely).
+DROPS = []            # results of jobs started by dropping files on the window, waiting for the page
 JOBS = {}             # job_id -> {"lines": [str, ...], "done": bool}
 MODEL_PROGRESS = {}   # model_name -> {"pct": int|None, "err": str|None, "done": bool}
 WATCH_EVENTS = {}     # job_id -> threading.Event, for the Watch mode Stop button
@@ -119,6 +122,13 @@ def _run_job(target_fn, *args, **kwargs):
     return job_id
 
 
+class JobCancelled(BaseException):
+    """Raised inside a running job when the user presses Stop. BaseException on purpose: the
+    'except Exception' blocks all over the processing code must not swallow it."""
+
+
+_CURRENT = {"job": None, "tid": None}  # the job running right now and its thread
+_CANCELLED = set()                     # job ids the user stopped
 _QUEUE = []                           # waiting jobs, first in first out
 _QUEUE_WAKE = threading.Semaphore(0)  # one release per queued job
 _WORKER = None
@@ -130,12 +140,20 @@ def _queue_worker():
         _QUEUE_WAKE.acquire()
         job_id, target_fn, args, kwargs = _QUEUE.pop(0)
         try:
-            with contextlib.redirect_stdout(_JobBuffer(job_id)):
-                target_fn(*args, **kwargs)
-        except Exception as e:
-            JOBS[job_id]["lines"].append(f"\n[!] {e}\n")
-        finally:
-            JOBS[job_id]["done"] = True
+            _PROCS.clear()
+            _CURRENT.update(job=job_id, tid=threading.get_ident())
+            try:
+                with contextlib.redirect_stdout(_JobBuffer(job_id)):
+                    target_fn(*args, **kwargs)
+            except JobCancelled:
+                JOBS[job_id]["lines"].append(chr(10) + "Stopped." + chr(10))
+            except Exception as e:
+                JOBS[job_id]["lines"].append(chr(10) + f"[!] {e}" + chr(10))
+            finally:
+                _CURRENT.update(job=None, tid=None)
+                JOBS[job_id]["done"] = True
+        except JobCancelled:
+            pass   # Stop arrived just as the job was finishing
 
 
 def _queue_position(job_id):
@@ -321,7 +339,7 @@ class Api:
             return {"ok": True, "jobId": job_id, "title": f"Watch: {Path(folder).name}", "stoppable": True}
 
         if mode == "file":
-            video = self.pick_file()
+            video = payload.get("path") or self.pick_file()
             if not video:
                 return {"ok": False, "message": "No file selected."}
             job_id = _run_job(_with_model, s["model"], lambda m: vs.process_video(
@@ -329,7 +347,7 @@ class Api:
             return {"ok": True, "jobId": job_id, "title": f"File: {Path(video).name}"}
 
         if mode == "folder":
-            folder = self.pick_folder()
+            folder = payload.get("path") or self.pick_folder()
             if not folder:
                 return {"ok": False, "message": "No folder selected."}
             report_dir = Path(folder)
@@ -440,23 +458,69 @@ class Api:
         _caption_close()
         return True
 
+    # ---------------------------------------------------------------- drag and drop
+    def _handle_drop(self, paths):
+        """Files / folders dropped on the window: a folder becomes a Folder job, each media file a File
+        job (they queue). The page picks the results up with take_drops()."""
+        for p in paths:
+            path = Path(p)
+            if path.is_dir():
+                mode = "folder"
+            elif path.suffix.lower() in vs.BATCH_EXTENSIONS:
+                mode = "file"
+            else:
+                DROPS.append({"ok": False, "message": f"Not a video or audio file: {path.name}"})
+                continue
+            try:
+                res = self.start_job({"mode": mode, "path": str(path)})
+            except Exception as e:
+                res = {"ok": False, "message": str(e)[:150]}
+            res["mode"] = mode
+            DROPS.append(res)
+
+    def take_drops(self):
+        out = list(DROPS)
+        del DROPS[:len(out)]
+        return out
+
     def stop_watch_job(self, job_id):
         ev = WATCH_EVENTS.get(job_id)
         if ev:
             ev.set()
         return True
 
-    def cancel_job(self, job_id):
-        """Drop a job that is still waiting in the queue (a running one is left alone)."""
+    def cancel_job(self, job_id, only_queued=False):
+        """Stop a job. Waiting in the queue: dropped. Running: stopped as soon as it next returns to
+        Python code (its helper programs are ended at once). only_queued=True leaves a running job alone."""
         for i, item in enumerate(_QUEUE):
             if item[0] == job_id:
                 if not _QUEUE_WAKE.acquire(blocking=False):
-                    return False  # worker already took it
+                    break  # the worker just took it
                 _QUEUE.pop(i)
-                JOBS[job_id]["lines"].append("Cancelled before it started.\n")
+                JOBS[job_id]["lines"].append("Cancelled before it started." + chr(10))
+                JOBS[job_id]["cancelled"] = True
                 JOBS[job_id]["done"] = True
                 return True
-        return False
+        ev = WATCH_EVENTS.get(job_id)
+        if ev:
+            ev.set()
+        if only_queued or _CURRENT["job"] != job_id or JOBS.get(job_id, {}).get("done"):
+            return bool(ev)
+        JOBS[job_id]["cancelled"] = True
+        JOBS[job_id]["lines"].append(chr(10) + "Stopping..." + chr(10))
+        tid = _CURRENT["tid"]
+        if tid is None:
+            return False
+        import ctypes
+        ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(tid), ctypes.py_object(JobCancelled))
+        for p in list(_PROCS):
+            try:   # only the job's helper programs - never e.g. an Ollama server it started
+                exe = Path(str(p.args[0] if isinstance(p.args, (list, tuple)) else p.args)).stem.lower()
+                if exe in ("ffmpeg", "deep-filter", "claude", "yt-dlp") and p.poll() is None:
+                    p.terminate()
+            except Exception:
+                pass
+        return True
 
     def get_job_log(self, job_id, offset=0):
         j = JOBS.get(job_id)
@@ -464,7 +528,7 @@ class Api:
             return {"lines": [], "done": True}
         lines = j["lines"][offset:]
         return {"lines": lines, "done": j["done"], "nextOffset": offset + len(lines),
-                "queued": _queue_position(job_id)}
+                "queued": _queue_position(job_id), "cancelled": bool(j.get("cancelled"))}
 
     def _online(self):
         s = vs.load_settings()
@@ -613,6 +677,17 @@ def main():
         "Cursed_Vishleshan", url=str(WEB_DIR / "index.html"), js_api=api,
         width=1180, height=800, min_size=(900, 620), background_color="#eef0f3")
     api._window = window
+
+    def bind_drop():
+        from webview.dom import DOMEventHandler
+
+        def on_drop(e):
+            files = (e.get("dataTransfer") or {}).get("files", [])
+            paths = [f["pywebviewFullPath"] for f in files if f.get("pywebviewFullPath")]
+            if paths:
+                api._handle_drop(paths)
+        window.dom.document.events.drop += DOMEventHandler(on_drop, True, True)
+    window.events.loaded += bind_drop
     webview.start()
 
 

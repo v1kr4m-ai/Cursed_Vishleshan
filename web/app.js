@@ -529,30 +529,28 @@ function closeToolTab(id) {
 
 // ---------------------------------------------------------------- job log panels
 // Polling, not a push from Python - see pollModelProgress() above for why.
-function addJobPanel(tab, jobId, title, stoppable) {
+function addJobPanel(tab, jobId, title) {
   const containerEl = tab.view;
   tab.jobStarted();
-  tab.setOnClose(() => callApi("cancel_job", jobId));
+  // closing the tab drops jobs still waiting (and stops a watch) but lets a running job finish
+  tab.setOnClose(() => callApi("cancel_job", jobId, true));
   const wrap = document.createElement("div");
   wrap.className = "joblog";
   wrap.innerHTML = `<div class="joblog-head"><span>${title}</span>
       <span class="joblog-actions">
-        ${stoppable ? '<button class="ghostbtn tiny" data-a="stop">Stop</button>' : ""}
-        <button class="ghostbtn tiny" data-a="cancel" style="display:none;">Cancel</button>
+        <button class="ghostbtn tiny danger" data-a="stop" title="Stop this job (a waiting job is dropped from the queue)">Stop</button>
         <span class="joblog-status">Running...</span>
       </span></div>
     <pre class="joblog-body"></pre>`;
   containerEl.prepend(wrap);
   const statusEl = wrap.querySelector(".joblog-status");
   const bodyEl = wrap.querySelector(".joblog-body");
-  if (stoppable) {
-    wrap.querySelector('[data-a="stop"]').addEventListener("click", () => callApi("stop_watch_job", jobId));
-  }
-
-  const cancelBtn = wrap.querySelector('[data-a="cancel"]');
-  let cancelled = false;
-  cancelBtn.addEventListener("click", async () => {
-    cancelled = await callApi("cancel_job", jobId);
+  const stopBtn = wrap.querySelector('[data-a="stop"]');
+  let stopping = false;
+  stopBtn.addEventListener("click", async () => {
+    stopBtn.disabled = true; stopping = true;
+    statusEl.textContent = "Stopping...";
+    await callApi("cancel_job", jobId);
   });
 
   let offset = 0;
@@ -564,15 +562,14 @@ function addJobPanel(tab, jobId, title, stoppable) {
       offset = r.nextOffset;
     }
     if (r.done) {
-      statusEl.textContent = cancelled ? "Cancelled" : "Done";
+      statusEl.textContent = r.cancelled ? "Stopped" : "Done";
       statusEl.classList.add("done");
-      cancelBtn.style.display = "none";
+      stopBtn.style.display = "none";
       tab.jobDone();
       wrap.classList.add("finished");
       return;
     }
-    statusEl.textContent = r.queued ? `Queued - ${r.queued} ahead` : "Running...";
-    cancelBtn.style.display = r.queued ? "" : "none";
+    if (!stopping) statusEl.textContent = r.queued ? `Queued - ${r.queued} ahead` : "Running...";
     setTimeout(tick, 500);
   };
   tick();
@@ -853,11 +850,37 @@ function wireStart() {
       toast((res && res.message) || "Could not start.");
       return;
     }
-    const tab = openToolTab(res.live ? res.title : ({ file: "File", folder: "Folder", url: "Link", watch: "Watch" }[state.mode] || res.title), "mode:" + state.mode);
-    if (res.live) { addLivePanel(res, tab); return; }
-    addJobPanel(tab, res.jobId, res.title, res.stoppable);
-    if (res.stoppable) tab.setOnClose(() => callApi("stop_watch_job", res.jobId));
+    showStartedJob(res, state.mode);
   });
+}
+
+function showStartedJob(res, mode) {
+  const tab = openToolTab(res.live ? res.title : ({ file: "File", folder: "Folder", url: "Link", watch: "Watch" }[mode] || res.title), "mode:" + mode);
+  if (res.live) { addLivePanel(res, tab); return; }
+  addJobPanel(tab, res.jobId, res.title);
+}
+
+// ---- drag and drop: Python receives the drop (it knows the real paths) and starts the jobs;
+// the page just picks the results up and shows the veil while something is dragged over it.
+function wireDrop() {
+  const veil = document.createElement("div");
+  veil.className = "dropveil";
+  veil.innerHTML = "<div>Drop video / audio files or a folder to process them</div>";
+  document.body.appendChild(veil);
+  let depth = 0;
+  const has = (e) => e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files");
+  document.addEventListener("dragenter", (e) => { if (has(e)) { depth++; veil.classList.add("show"); } });
+  document.addEventListener("dragover", (e) => { if (has(e)) e.preventDefault(); });
+  document.addEventListener("dragleave", (e) => { if (has(e) && --depth <= 0) { depth = 0; veil.classList.remove("show"); } });
+  document.addEventListener("drop", () => { depth = 0; veil.classList.remove("show"); });
+  setInterval(async () => {
+    const drops = await callApi("take_drops");
+    if (!Array.isArray(drops)) return;
+    for (const res of drops) {
+      if (!res.ok) toast(res.message || "Could not start.");
+      else showStartedJob(res, res.mode);
+    }
+  }, 700);
 }
 
 async function boot() {
@@ -870,6 +893,7 @@ async function boot() {
   wireStats();
   wireNav();
   wireStart();
+  wireDrop();
 }
 
 boot();

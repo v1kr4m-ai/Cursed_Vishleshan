@@ -91,6 +91,8 @@ Applied automatically to every feature and also available as a standalone tool.
 - **Online / Offline preference toggle** (top right): which tools are preferred by default (Claude / ElevenLabs / edge-tts vs. Ollama / LM Studio / local cleanup). It never disables an option. A separate light shows real internet status.
 - **Offline Settings:** engine priority, server addresses and models, Ollama context window, frames sent to vision models, per-call timeout, chunk sizes.
 - **Model management:** the Whisper model list is a card deck. Each model has icons to open its folder, re-check it, delete it, or delete and download again. Interrupted downloads are tagged *incomplete*.
+- **Drag and drop:** drop video/audio files (several at once) or a folder anywhere on the window to start File / Folder jobs.
+- **Stop any job:** every job panel has a **Stop** button. A waiting job leaves the queue; a running one stops within moments (its ffmpeg / helper programs are ended too) and the next queued job starts.
 - **One tab per tool run:** every file / folder / link / watch / live / cleanup / music run opens its own tab in the top bar. Closing a tab closes a live session or stops a watch job.
 - **History:** searchable list of everything processed, with preview, open file, show in folder and remove.
 - Read-aloud: Microsoft neural voices online (edge-tts), built-in Windows voices offline.
