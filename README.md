@@ -94,6 +94,7 @@ Applied automatically to every feature and also available as a standalone tool.
 - **Online / Offline preference toggle** (top right): which tools are preferred by default (Claude / ElevenLabs / edge-tts vs. Ollama / LM Studio / local cleanup). It never disables an option. A separate light shows real internet status.
 - **Offline Settings:** engine priority, server addresses and models, Ollama context window, frames sent to vision models, per-call timeout, chunk sizes.
 - **Model management:** the Whisper model list is a card deck. Each model has icons to open its folder, re-check it, delete it, or delete and download again. Interrupted downloads are tagged *incomplete*.
+- **Tray icon and notifications:** a tray icon (Open / current status / Quit) is always there. When a job finishes, fails or the queue empties while the window is in the background, you get a Windows notification. Closing the window while jobs are running hides it to the tray so they keep going. Both are switchable in Offline Settings, App behaviour. Needs `pystray`.
 - **Drag and drop:** drop video/audio files (several at once) or a folder anywhere on the window to start File / Folder jobs.
 - **Stop any job:** every job panel has a **Stop** button. A waiting job leaves the queue; a running one stops within moments (its ffmpeg / helper programs are ended too) and the next queued job starts.
 - **One tab per tool run:** every file / folder / link / watch / live / cleanup / music run opens its own tab in the top bar. Closing a tab closes a live session or stops a watch job.

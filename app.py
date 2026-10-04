@@ -124,6 +124,108 @@ def _run_job(target_fn, *args, **kwargs):
     return job_id
 
 
+# ---------------------------------------------------------------- tray icon + notifications
+_TRAY = {"icon": None, "window": None, "quitting": False, "focused": True}
+
+
+def _tray_image():
+    from PIL import Image, ImageDraw
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.ellipse((2, 2, 62, 62), fill=(245, 184, 46, 255))
+    d.polygon([(16, 18), (26, 18), (32, 38), (38, 18), (48, 18), (36, 48), (28, 48)], fill=(22, 24, 29, 255))
+    return img
+
+
+def _status_text():
+    cur = _CURRENT["job"]
+    if cur:
+        waiting = len(_QUEUE)
+        return f"Working: {JOBS.get(cur, {}).get('title') or 'a job'}" + (f" (+{waiting} waiting)" if waiting else "")
+    return "Idle"
+
+
+def _notify(title, message):
+    icon = _TRAY["icon"]
+    if icon is None:
+        return
+
+    def send():   # the toast call can take seconds; never hold up the job queue for it
+        try:
+            icon.notify(message[:240], title[:60])
+        except Exception:
+            pass
+    threading.Thread(target=send, daemon=True).start()
+
+
+def _show_window():
+    w = _TRAY["window"]
+    if w is not None:
+        try:
+            w.show()
+            w.restore()
+        except Exception:
+            pass
+
+
+def _quit_app():
+    _TRAY["quitting"] = True
+    w = _TRAY["window"]
+    if w is not None:
+        try:
+            w.destroy()
+        except Exception:
+            pass
+
+
+def _start_tray(window):
+    """System-tray icon: Open / status / Quit, and the home of 'job finished' notifications.
+    Optional - without pystray the app simply has no tray icon."""
+    try:
+        import pystray
+        icon = pystray.Icon(
+            "cursed_vishleshan", _tray_image(), "Cursed_Vishleshan",
+            pystray.Menu(
+                pystray.MenuItem("Open Cursed_Vishleshan", lambda i, m: _show_window(), default=True),
+                pystray.MenuItem(lambda m: _status_text(), None, enabled=False),
+                pystray.MenuItem("Quit", lambda i, m: _quit_app())))
+        icon.run_detached()
+        _TRAY.update(icon=icon, window=window)
+    except Exception as e:
+        print(f"[i] No tray icon: {e}")
+
+
+def _on_closing():
+    """Closing the window while jobs run hides it to the tray instead (jobs keep going)."""
+    if _TRAY["quitting"] or _TRAY["icon"] is None:
+        return True
+    if vs.load_settings().get("tray_keep", True) and (_CURRENT["job"] or _QUEUE):
+        try:
+            _TRAY["window"].hide()
+        except Exception:
+            return True
+        _notify("Still working", "Your jobs keep running. Click the tray icon to open the window, or use Quit there.")
+        return False
+    return True
+
+
+def _job_finished_notice(job_id, outcome):
+    """Toast when a job ends while the user isn't looking at the window."""
+    if outcome == "stopped" or _TRAY["icon"] is None or not vs.load_settings().get("notify_done", True):
+        return
+    visible_and_focused = _TRAY["focused"]
+    if visible_and_focused:
+        return
+    title = JOBS.get(job_id, {}).get("title") or "Job"
+    waiting = len(_QUEUE)
+    if outcome == "failed":
+        _notify("Job failed", f"{title} - open the app for details.")
+    elif waiting:
+        _notify("Done", f"{title}. Next in the queue is starting ({waiting} waiting).")
+    else:
+        _notify("Done", f"{title} - all jobs finished.")
+
+
 class JobCancelled(BaseException):
     """Raised inside a running job when the user presses Stop. BaseException on purpose: the
     'except Exception' blocks all over the processing code must not swallow it."""
@@ -144,16 +246,20 @@ def _queue_worker():
         try:
             _PROCS.clear()
             _CURRENT.update(job=job_id, tid=threading.get_ident())
+            outcome = "ok"
             try:
                 with contextlib.redirect_stdout(_JobBuffer(job_id)):
                     target_fn(*args, **kwargs)
             except JobCancelled:
+                outcome = "stopped"
                 JOBS[job_id]["lines"].append(chr(10) + "Stopped." + chr(10))
             except Exception as e:
+                outcome = "failed"
                 JOBS[job_id]["lines"].append(chr(10) + f"[!] {e}" + chr(10))
             finally:
                 _CURRENT.update(job=None, tid=None)
                 JOBS[job_id]["done"] = True
+            _job_finished_notice(job_id, outcome)
         except JobCancelled:
             pass   # Stop arrived just as the job was finishing
 
@@ -409,6 +515,12 @@ class Api:
         return result[0] if result else None
 
     def start_job(self, payload):
+        res = self._start_job(payload)
+        if isinstance(res, dict) and res.get("jobId") in JOBS:
+            JOBS[res["jobId"]]["title"] = res.get("title", "")
+        return res
+
+    def _start_job(self, payload):
         s = vs.load_settings()
         mode = payload.get("mode", s.get("mode", "file"))
         online = self._online()
@@ -656,12 +768,32 @@ class Api:
 
     def start_cleanup_job(self, src_path, out_dir, noise_mode, speed=None):
         out_dir = Path(out_dir) if out_dir else Path(src_path).parent
-        return _run_job(vs._run_cleanup_job, Path(src_path), out_dir, noise_mode, self._online(),
-                         dict(vs.SPEED_CHOICES).get(speed, 1.0))
+        job_id = _run_job(vs._run_cleanup_job, Path(src_path), out_dir, noise_mode, self._online(),
+                          dict(vs.SPEED_CHOICES).get(speed, 1.0))
+        JOBS[job_id]["title"] = f"Clean up: {Path(src_path).name}"
+        return job_id
+
+    def report_focus(self, focused):
+        _TRAY["focused"] = bool(focused)
+        return True
+
+    def get_app_settings(self):
+        s = vs.load_settings()
+        return {"notify": bool(s.get("notify_done", True)), "tray": bool(s.get("tray_keep", True)),
+                "trayAvailable": _TRAY["icon"] is not None}
+
+    def save_app_settings(self, data):
+        s = vs.load_settings()
+        s["notify_done"] = bool(data.get("notify", True))
+        s["tray_keep"] = bool(data.get("tray", True))
+        vs.save_settings(s)
+        return True
 
     def start_music_job(self, src_path, out_dir, speed=None):
         out_dir = Path(out_dir) if out_dir else Path(src_path).parent
-        return _run_job(vs._run_music_job, Path(src_path), out_dir, dict(vs.SPEED_CHOICES).get(speed, 1.0))
+        job_id = _run_job(vs._run_music_job, Path(src_path), out_dir, dict(vs.SPEED_CHOICES).get(speed, 1.0))
+        JOBS[job_id]["title"] = f"Extract music: {Path(src_path).name}"
+        return job_id
 
     # ---------------------------------------------------------------- Offline Settings tab
     def get_offline_settings(self):
@@ -804,6 +936,7 @@ class Api:
         online = self._online()
         vs.VOCAB = vs.load_vocab()
         job_id = _run_job(vs.regenerate_outputs, Path(path), s, online)
+        JOBS[job_id]["title"] = f"Rebuild: {Path(path).name}"
         return {"ok": True, "jobId": job_id, "title": f"Rebuild: {Path(path).name}"}
 
     def export_file(self, path, fmt):
@@ -853,6 +986,9 @@ def main():
         "Cursed_Vishleshan", url=str(WEB_DIR / "index.html"), js_api=api,
         width=1180, height=800, min_size=(900, 620), background_color="#eef0f3")
     api._window = window
+    _start_tray(window)
+    window.events.closing += _on_closing
+    window.events.closed += lambda: _TRAY["icon"] and _TRAY["icon"].stop()
 
     def bind_drop():
         from webview.dom import DOMEventHandler

@@ -488,7 +488,26 @@ function persistHome() {
 }
 
 // ---------------------------------------------------------------- tabs (fixed + one per running tool)
-const TAB_LOADERS = { cleanup: loadCleanupTab, offline: loadOfflineTab, history: () => loadHistoryTab() };
+const TAB_LOADERS = { cleanup: loadCleanupTab, offline: () => { loadOfflineTab(); loadAppSettings(); }, history: () => loadHistoryTab() };
+
+async function loadAppSettings() {
+  const a = await callApi("get_app_settings");
+  if (!a || typeof a.notify === "undefined") return;
+  const n = document.getElementById("notifyChk"), t = document.getElementById("trayChk");
+  n.checked = a.notify; t.checked = a.tray;
+  const save = () => callApi("save_app_settings", { notify: n.checked, tray: t.checked });
+  n.onchange = t.onchange = save;
+  document.getElementById("trayNote").textContent = a.trayAvailable ? "" :
+    "No tray icon: install the 'pystray' package (pip install pystray) to enable notifications and the tray.";
+}
+
+// tell Python whether the window is in front, so it only sends a notification when you are not looking
+(function reportFocus() {
+  const send = () => callApi("report_focus", document.hasFocus() && document.visibilityState === "visible");
+  window.addEventListener("focus", send); window.addEventListener("blur", send);
+  document.addEventListener("visibilitychange", send);
+  setTimeout(send, 1500);
+})();
 const TOOL_TABS = {};
 let toolSeq = 0;
 
