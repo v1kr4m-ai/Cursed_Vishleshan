@@ -44,7 +44,11 @@
     <section class="dashgrid">
       <div class="maincol one">
         <div class="card full">
-          <h2>What to process</h2>
+          <div class="rowflex" style="justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <h2 style="margin:0;">What to process</h2>
+            <label class="optpill" title="One click sets cleanup, speed, speakers, chapters and export for a kind of recording. You can still change anything afterwards.">
+              <span>Preset</span><select id="presetSelect"></select></label>
+          </div>
           <div class="sourcegrid" id="sourceGrid"></div>
           <div class="pickrow" id="urlRow" style="display:none;">
             <input type="text" id="urlInput" class="select" placeholder="https://...">

@@ -30,6 +30,7 @@ const MOCK_HOME = {
   speed: "Normal",
   speakerChoices: ["Off", "Auto-detect", "2 speakers", "3 speakers", "4 speakers", "5 speakers", "6 speakers"],
   speakers: "Off",
+  preset: "Custom",
   spokenChoices: ["Auto-detect", "English", "Hindi", "Urdu", "French", "German", "Spanish"],
   outputChoices: ["Original", "English", "Hindi", "Urdu", "French", "German", "Spanish"],
   outputs: ["Original", "English"],
@@ -353,13 +354,13 @@ function renderSpoken() {
   const sel = document.getElementById("spokenSelect");
   sel.innerHTML = state.spokenChoices.map((c) =>
     `<option ${c === state.spokenLanguage ? "selected" : ""}>${c}</option>`).join("");
-  sel.addEventListener("change", () => { state.spokenLanguage = sel.value; persistHome(); });
+  sel.onchange = () => { state.spokenLanguage = sel.value; persistHome(); };
   const sp = document.getElementById("speedSelect");
   sp.innerHTML = state.speedChoices.map((c) => `<option ${c === state.speed ? "selected" : ""}>${c}</option>`).join("");
-  sp.addEventListener("change", () => { state.speed = sp.value; persistHome(); });
+  sp.onchange = () => { state.speed = sp.value; persistHome(); };
   const sk = document.getElementById("speakerSelect");
   sk.innerHTML = state.speakerChoices.map((c) => `<option ${c === state.speakers ? "selected" : ""}>${c}</option>`).join("");
-  sk.addEventListener("change", () => { state.speakers = sk.value; persistHome(); });
+  sk.onchange = () => { state.speakers = sk.value; persistHome(); };
 }
 
 // Output languages: same stack-of-cards behaviour as the model deck (hover peeks, click pins open)
@@ -482,6 +483,7 @@ function persistHome() {
     spokenLanguage: state.spokenLanguage,
     speed: state.speed,
     speakers: state.speakers,
+    preset: state.preset,
     outputs: state.outputs,
     mode: state.mode,
     skipDone: document.getElementById("skipDone").checked,
@@ -1032,6 +1034,43 @@ document.getElementById("historyRemoveBtn")?.addEventListener("click", async () 
   loadHistoryTab();
 });
 
+// ---- presets: one click sets the cleanup mode, speed, speakers, chapters and export for a kind of recording
+const PRESETS = {
+  "Custom": null,
+  "Song / lyrics": { noise: "studio", speed: "75%", speakers: "Off", chapters: false, export: "none", wordTiming: true, subtitles: "srt",
+    hint: "Studio AI isolates the voice, audio is slowed to 75%, word timing on." },
+  "Meeting": { noise: null, speed: "Normal", speakers: "Auto-detect", chapters: true, export: "docx", wordTiming: false,
+    hint: "Speaker labels, chapters and a Word summary." },
+  "Lecture / talk": { noise: null, speed: "Normal", speakers: "Off", chapters: true, export: "pdf", wordTiming: false,
+    hint: "Chapters and a PDF summary." },
+};
+
+async function applyPreset(name) {
+  const p = PRESETS[name];
+  state.preset = name;
+  if (p) {
+    state.speed = p.speed; state.speakers = p.speakers; state.chapters = p.chapters;
+    state.export = p.export; state.wordTiming = p.wordTiming; state.subtitles = p.subtitles || state.subtitles;
+    if (p.noise) {
+      const cu = await callApi("get_voice_cleanup");
+      if (cu && cu.noise !== undefined) {
+        await callApi("save_voice_cleanup", { noise: p.noise, keepClean: cu.keepClean });
+        state.noiseLabel = cu.choices[cu.values.indexOf(p.noise)] || state.noiseLabel;
+        if (cleanupState) cleanupState.noise = p.noise;
+        renderStats();
+      }
+    }
+    toast(`${name}: ${p.hint}`);
+  }
+  renderSpoken(); renderSources(); persistHome();
+}
+
+function wirePreset() {
+  const sel = document.getElementById("presetSelect");
+  sel.innerHTML = Object.keys(PRESETS).map((n) => `<option ${n === state.preset ? "selected" : ""}>${n}</option>`).join("");
+  sel.addEventListener("change", () => applyPreset(sel.value));
+}
+
 function wireStart() {
   document.getElementById("startBtn").addEventListener("click", async () => {
     await persistHome();
@@ -1100,6 +1139,7 @@ async function boot() {
   wireStats();
   wireNav();
   wireStart();
+  wirePreset();
   wireDrop();
 }
 
