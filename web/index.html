@@ -49,26 +49,29 @@
           <div class="pickrow" id="urlRow" style="display:none;">
             <input type="text" id="urlInput" class="select" placeholder="https://...">
           </div>
-          <div class="rowflex">
-            <label class="checkrow"><input type="checkbox" id="skipDone"> Folders: skip already done</label>
-            <label class="checkrow"><input type="checkbox" id="subfolders"> Include subfolders</label>
-            <label class="checkrow" title="Also write chapters (with timestamps) and key points - uses the summary AI, so it adds time"><input type="checkbox" id="chaptersChk"> Chapters &amp; key points</label>
-            <label class="checkrow" title="Word-by-word timing: writes a .csv and cuts subtitles at natural pauses (a little slower)"><input type="checkbox" id="wordsChk"> Word timing</label>
-            <label class="checkrow" title="Also save each summary as a Word and/or PDF document next to it">Export
-              <select id="exportSelect" class="select" style="width:auto;padding:5px 10px;">
-                <option value="none">none</option><option value="docx">Word</option>
-                <option value="pdf">PDF</option><option value="both">Word + PDF</option></select></label>
-            <label class="checkrow" title="Subtitle files made next to the transcript">Subtitles
-              <select id="subsSelect" class="select" style="width:auto;padding:5px 10px;">
-                <option value="srt">.srt</option><option value="vtt">.vtt</option>
-                <option value="both">.srt + .vtt</option><option value="none">none</option></select></label>
-          </div>
           <div class="rowflex cliprow" id="clipRow" style="display:none;margin-top:10px;">
             <span class="small muted">Only this part:</span>
             <input type="text" id="clipStart" class="select cliptime" placeholder="from  0:00">
             <span class="small muted">to</span>
             <input type="text" id="clipEnd" class="select cliptime" placeholder="to  (end)">
             <span class="small muted">e.g. 10:00 and 25:00 - leave empty for the whole recording</span>
+          </div>
+          <div class="rowflex" id="folderOpts" style="display:none;margin-top:10px;">
+            <label class="checkrow"><input type="checkbox" id="skipDone"> Skip files already done</label>
+            <label class="checkrow"><input type="checkbox" id="subfolders"> Include subfolders</label>
+          </div>
+          <div class="rowflex extrasrow" style="margin-top:12px;">
+            <span class="small muted">Also make:</span>
+            <label class="checkrow" title="Also write chapters (with timestamps) and key points - uses the summary AI, so it adds time"><input type="checkbox" id="chaptersChk"> Chapters &amp; key points</label>
+            <label class="checkrow" title="Word-by-word timing: writes a .csv and cuts subtitles at natural pauses (a little slower)"><input type="checkbox" id="wordsChk"> Word timing</label>
+            <label class="checkrow" title="Subtitle files made next to the transcript">Subtitles
+              <select id="subsSelect" class="select" style="width:auto;padding:5px 10px;">
+                <option value="srt">.srt</option><option value="vtt">.vtt</option>
+                <option value="both">.srt + .vtt</option><option value="none">none</option></select></label>
+            <label class="checkrow" title="Also save each summary as a Word and/or PDF document next to it">Export
+              <select id="exportSelect" class="select" style="width:auto;padding:5px 10px;">
+                <option value="none">none</option><option value="docx">Word</option>
+                <option value="pdf">PDF</option><option value="both">Word + PDF</option></select></label>
           </div>
           <div class="rowflex" style="margin-top:14px;">
             <label class="optpill" title="The language in the recording. Auto-detect also handles mixed languages.">

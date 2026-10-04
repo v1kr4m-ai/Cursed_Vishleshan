@@ -470,3 +470,9 @@ html, body {
 
 /* Round 11: stem choices */
 .stemrow { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; margin: 4px 0 10px; }
+
+/* Round 12: layout audit fixes */
+.liverow .select[data-a="redospeed"] { flex: none; width: auto; min-width: 0; }
+.optpill select { max-width: 150px; }
+.extrasrow { gap: 8px 18px; align-items: center; }
+.extrasrow .checkrow select { margin-left: 4px; }

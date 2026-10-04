@@ -26,7 +26,7 @@ const MOCK_HOME = {
   ],
   selectedModel: "small",
   spokenLanguage: "Auto-detect",
-  speedChoices: ["Normal", "Slightly slower (85%)", "Slower (75%)", "Much slower (65%)", "Half speed (50%)"],
+  speedChoices: ["Normal", "85%", "75%", "65%", "50%"],
   speed: "Normal",
   speakerChoices: ["Off", "Auto-detect", "2 speakers", "3 speakers", "4 speakers", "5 speakers", "6 speakers"],
   speakers: "Off",
@@ -410,6 +410,12 @@ function renderSources() {
   }));
   document.getElementById("urlRow").style.display = state.mode === "url" ? "flex" : "none";
   document.getElementById("clipRow").style.display = ["file", "url"].includes(state.mode) ? "flex" : "none";
+  document.getElementById("folderOpts").style.display = ["folder", "watch"].includes(state.mode) ? "flex" : "none";
+  // live capture has its own pipeline: no extras, speed or speaker options there
+  const live = ["mic", "system", "call"].includes(state.mode);
+  document.querySelector(".extrasrow").style.display = live ? "none" : "flex";
+  document.getElementById("speedSelect").parentElement.style.display = live ? "none" : "";
+  document.getElementById("speakerSelect").parentElement.style.display = live ? "none" : "";
   document.getElementById("skipDone").checked = state.skipDone;
   const chk = (id, key) => {
     const el = document.getElementById(id);

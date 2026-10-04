@@ -315,8 +315,7 @@ NOISE_FILTERS = {
 # Speech speed: Whisper struggles with very fast speech (rap, songs). Slowing the audio down
 # (pitch kept) before recognition helps. _SPEED is set per job in process_video; all timestamps
 # from the slowed audio are multiplied back by it so they match the original recording.
-SPEED_CHOICES = [("Normal", 1.0), ("Slightly slower (85%)", 0.85), ("Slower (75%)", 0.75),
-                 ("Much slower (65%)", 0.65), ("Half speed (50%)", 0.5)]
+SPEED_CHOICES = [("Normal", 1.0), ("85%", 0.85), ("75%", 0.75), ("65%", 0.65), ("50%", 0.5)]
 _SPEED = 1.0
 
 
