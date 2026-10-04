@@ -2518,6 +2518,9 @@ def _run_url_job(cfg, model, online):
     items = [{"path": p, "kind": "url", "source": page} for p, _, page in download_url(cfg["url"])]
     if not items:
         return
+    if len(items) > 1 and cfg.get("clip"):
+        print("  (A playlist was found - the 'only this part' range is ignored and every video is processed in full.)")
+        cfg = {k: v for k, v in cfg.items() if k != "clip"}
     print(f"  Saved in: {SAVE_DIR / 'Downloads'}")
     if len(items) == 1:
         keep_awake(True)

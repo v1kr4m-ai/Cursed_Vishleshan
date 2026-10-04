@@ -463,3 +463,7 @@ html, body {
   border-radius: 12px; background: #f6f7f9; font-size: 12.5px; }
 .speakerpanel label { display: inline-flex; gap: 6px; align-items: center; }
 .speakerpanel input { border: 1px solid #d9dce2; border-radius: 8px; padding: 5px 8px; width: 120px; font: inherit; }
+
+/* Round 10: "only this part" range */
+.cliprow { gap: 10px; align-items: center; }
+.cliptime { width: 110px !important; padding: 7px 12px !important; }

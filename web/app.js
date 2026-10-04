@@ -409,6 +409,7 @@ function renderSources() {
     persistHome();
   }));
   document.getElementById("urlRow").style.display = state.mode === "url" ? "flex" : "none";
+  document.getElementById("clipRow").style.display = ["file", "url"].includes(state.mode) ? "flex" : "none";
   document.getElementById("skipDone").checked = state.skipDone;
   const chk = (id, key) => {
     const el = document.getElementById(id);
@@ -1029,6 +1030,10 @@ function wireStart() {
     const startBtn = document.getElementById("startBtn");
     const payload = { mode: state.mode };
     if (state.mode === "url") payload.url = document.getElementById("urlInput").value.trim();
+    if (["file", "url"].includes(state.mode)) {
+      const from = document.getElementById("clipStart").value.trim(), to = document.getElementById("clipEnd").value.trim();
+      if (from || to) payload.clip = { start: from, end: to };
+    }
     if (["mic", "system", "call"].includes(state.mode)) {
       const open = Object.values(TOOL_TABS).find((t) => t.key === "mode:" + state.mode);
       if (open) { activateTab(open.id); toast("Already open - use this tab."); return; }

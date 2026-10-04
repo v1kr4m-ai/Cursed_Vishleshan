@@ -389,6 +389,24 @@ _PLAYABLE = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".flac", ".mp4", "
 _VIDEO = {".mp4", ".m4v", ".webm", ".mkv", ".mov", ".avi", ".wmv", ".flv", ".mpg", ".mpeg", ".3gp"}
 
 
+def _parse_time(text):
+    """'90', '1:30', '01:02:03', '1h2m3s' -> seconds (None when empty). Raises ValueError when unreadable."""
+    import re
+    t = (text or "").strip().lower()
+    if not t:
+        return None
+    m = re.fullmatch(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s?)?", t)
+    if m and any(m.groups()) and not re.fullmatch(r"\d+(\.\d+)?", t):
+        return int(m.group(1) or 0) * 3600 + int(m.group(2) or 0) * 60 + float(m.group(3) or 0)
+    parts = t.split(":")
+    if len(parts) > 3 or not all(re.fullmatch(r"\d+(\.\d+)?", x) for x in parts):
+        raise ValueError(f"Can't read the time '{text}'. Use 90, 1:30 or 01:02:03.")
+    secs = 0.0
+    for x in parts:
+        secs = secs * 60 + float(x)
+    return secs
+
+
 def _history_media(e):
     """The recording a history entry came from (so the preview can play it), if it still exists."""
     for f in reversed(e.get("files", [])):
@@ -522,6 +540,15 @@ class Api:
 
     def _start_job(self, payload):
         s = vs.load_settings()
+        clip = payload.get("clip") or {}
+        if (clip.get("start") or clip.get("end")) and payload.get("mode", s.get("mode", "file")) in ("file", "url"):
+            try:
+                a, b = _parse_time(clip.get("start")), _parse_time(clip.get("end"))
+            except ValueError as e:
+                return {"ok": False, "message": str(e)}
+            if b is not None and b <= (a or 0):
+                return {"ok": False, "message": "The end time must be after the start time."}
+            s["clip"] = (a or 0.0, b)      # this job only - never saved
         mode = payload.get("mode", s.get("mode", "file"))
         online = self._online()
         vs.VOCAB = vs.load_vocab()

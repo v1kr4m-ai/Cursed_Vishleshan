@@ -95,6 +95,7 @@ Applied automatically to every feature and also available as a standalone tool.
 - **Offline Settings:** engine priority, server addresses and models, Ollama context window, frames sent to vision models, per-call timeout, chunk sizes.
 - **Model management:** the Whisper model list is a card deck. Each model has icons to open its folder, re-check it, delete it, or delete and download again. Interrupted downloads are tagged *incomplete*.
 - **Tray icon and notifications:** a tray icon (Open / current status / Quit) is always there. When a job finishes, fails or the queue empties while the window is in the background, you get a Windows notification. Closing the window while jobs are running hides it to the tray so they keep going. Both are switchable in Offline Settings, App behaviour. Needs `pystray`.
+- **Only this part:** for File and Link jobs, enter a *from* and *to* time (`10:00`, `1:02:03`, `90`, `1h2m`) to process just that stretch; the files are named `..._part_00-10-00_to_00-25-00...` and timestamps stay in original recording time. Not saved between runs.
 - **Drag and drop:** drop video/audio files (several at once) or a folder anywhere on the window to start File / Folder jobs.
 - **Stop any job:** every job panel has a **Stop** button. A waiting job leaves the queue; a running one stops within moments (its ffmpeg / helper programs are ended too) and the next queued job starts.
 - **One tab per tool run:** every file / folder / link / watch / live / cleanup / music run opens its own tab in the top bar. Closing a tab closes a live session or stops a watch job.
@@ -271,14 +272,12 @@ The ElevenLabs key is encrypted with Windows DPAPI and tied to your Windows acco
 - **Windows only for now.** System-audio capture uses WASAPI loopback (PyAudioWPatch); offline text-to-speech uses Windows voices; the key store uses DPAPI.
 - GPU libraries are version-sensitive (see GPU notes).
 - First Studio AI run is slow while models download; CPU-only Studio AI runs near real-time speed.
-- Not ported from the old interface: the "only this part (e.g. 10:00-25:00)" clip range.
 
 ---
 
 ## Roadmap
 
 **Next up**
-- Clip range ("only this part") for file and link jobs
 - Stop/cancel for every running job, not just Watch
 - Reopen produced files directly from a finished job's panel
 

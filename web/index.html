@@ -63,6 +63,13 @@
                 <option value="srt">.srt</option><option value="vtt">.vtt</option>
                 <option value="both">.srt + .vtt</option><option value="none">none</option></select></label>
           </div>
+          <div class="rowflex cliprow" id="clipRow" style="display:none;margin-top:10px;">
+            <span class="small muted">Only this part:</span>
+            <input type="text" id="clipStart" class="select cliptime" placeholder="from  0:00">
+            <span class="small muted">to</span>
+            <input type="text" id="clipEnd" class="select cliptime" placeholder="to  (end)">
+            <span class="small muted">e.g. 10:00 and 25:00 - leave empty for the whole recording</span>
+          </div>
           <div class="rowflex" style="margin-top:14px;">
             <label class="optpill" title="The language in the recording. Auto-detect also handles mixed languages.">
               <span>Language</span><select id="spokenSelect"></select></label>
