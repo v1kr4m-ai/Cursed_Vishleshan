@@ -450,6 +450,7 @@ class Api:
             "wordTiming": bool(saved.get("word_timing", False)),
             "speakerChoices": [n for n, _ in vs.SPEAKER_CHOICES],
             "preset": saved.get("preset", "Custom"),
+            "outputDir": saved.get("output_dir", ""),
             "speakers": next((n for n, v in vs.SPEAKER_CHOICES if v == saved.get("speakers", "off")), "Off"),
             "onlineReal": online0,
             "onlinePref": bool(saved.get("mode_online", online0)),
@@ -469,6 +470,7 @@ class Api:
             "subfolders": bool(data.get("subfolders", False)),
             "speak_save": bool(data.get("speakSave", False)),
             "preset": str(data.get("preset") or "Custom")[:40],
+            "output_dir": str(data.get("outputDir") or ""),
             "speakers": dict(vs.SPEAKER_CHOICES).get(data.get("speakers"), "off"),
             "chapters": bool(data.get("chapters", False)),
             "export": data.get("export") if data.get("export") in ("none", "docx", "pdf", "both") else "none",
@@ -588,14 +590,15 @@ class Api:
             if not folder:
                 return {"ok": False, "message": "No folder selected."}
             report_dir = Path(folder)
+            out_root = Path(s["output_dir"]) if s.get("output_dir") else report_dir
             vids = vs.list_videos(report_dir, s.get("subfolders", False))
-            skipped = [v for v in vids if s.get("skip_done", True) and vs.already_done(v)]
+            skipped = [v for v in vids if s.get("skip_done", True) and vs.already_done(v, s.get("output_dir"))]
             todo = [v for v in vids if v not in skipped]
             if not todo:
                 return {"ok": False, "message": f"{len(vids)} file(s) found - all {len(skipped)} already done."}
             items = [{"path": v, "kind": "file"} for v in todo]
             job_id = _run_job(_with_model, s["model"], lambda m: vs.run_batch(
-                items, s, m, online, report_dir))
+                items, s, m, online, out_root))
             return {"ok": True, "jobId": job_id, "title": f"Folder: {report_dir.name}"}
 
         if mode == "url":

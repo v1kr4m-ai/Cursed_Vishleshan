@@ -31,6 +31,7 @@ const MOCK_HOME = {
   speakerChoices: ["Off", "Auto-detect", "2 speakers", "3 speakers", "4 speakers", "5 speakers", "6 speakers"],
   speakers: "Off",
   preset: "Custom",
+  outputDir: "",
   spokenChoices: ["Auto-detect", "English", "Hindi", "Urdu", "French", "German", "Spanish"],
   outputChoices: ["Original", "English", "Hindi", "Urdu", "French", "German", "Spanish"],
   outputs: ["Original", "English"],
@@ -484,6 +485,7 @@ function persistHome() {
     speed: state.speed,
     speakers: state.speakers,
     preset: state.preset,
+    outputDir: state.outputDir,
     outputs: state.outputs,
     mode: state.mode,
     skipDone: document.getElementById("skipDone").checked,
@@ -1065,6 +1067,23 @@ async function applyPreset(name) {
   renderSpoken(); renderSources(); persistHome();
 }
 
+function renderOutDir() {
+  const btn = document.getElementById("outDirBtn"), clr = document.getElementById("outDirClear");
+  const name = state.outputDir ? state.outputDir.split(/[\\/]/).filter(Boolean).pop() : "";
+  btn.textContent = state.outputDir ? `Save to: ${name}` : "Save to: next to each file";
+  btn.title = state.outputDir || "Where transcripts, summaries and other results are saved";
+  clr.style.display = state.outputDir ? "" : "none";
+}
+
+function wireOutDir() {
+  document.getElementById("outDirBtn").onclick = async () => {
+    const p = await callApi("pick_folder");
+    if (p) { state.outputDir = p; renderOutDir(); persistHome(); }
+  };
+  document.getElementById("outDirClear").onclick = () => { state.outputDir = ""; renderOutDir(); persistHome(); };
+  renderOutDir();
+}
+
 function wirePreset() {
   const sel = document.getElementById("presetSelect");
   sel.innerHTML = Object.keys(PRESETS).map((n) => `<option ${n === state.preset ? "selected" : ""}>${n}</option>`).join("");
@@ -1140,6 +1159,7 @@ async function boot() {
   wireNav();
   wireStart();
   wirePreset();
+  wireOutDir();
   wireDrop();
 }
 

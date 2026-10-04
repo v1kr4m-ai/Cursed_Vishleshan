@@ -476,3 +476,6 @@ html, body {
 .optpill select { max-width: 150px; }
 .extrasrow { gap: 8px 18px; align-items: center; }
 .extrasrow .checkrow select { margin-left: 4px; }
+
+.outdir { display: inline-flex; gap: 4px; align-items: center; }
+#outDirBtn { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

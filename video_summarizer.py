@@ -2112,8 +2112,8 @@ def list_videos(folder: Path, recursive: bool):
                   if f.is_file() and f.suffix.lower() in BATCH_EXTENSIONS and not f.name.startswith("."))
 
 
-def already_done(f: Path) -> bool:
-    return (f.parent / f"{f.stem}_transcript.txt").exists()
+def already_done(f: Path, out_dir=None) -> bool:
+    return (Path(out_dir) if out_dir else f.parent).joinpath(f"{f.stem}_transcript.txt").exists()
 
 
 class _YtLog:
@@ -2239,7 +2239,8 @@ def _process(vpath, audio_src, offset, clip, cfg, model, online, kind, source, o
     lang_desc = ", ".join(f"{s['name']} ({s['share']:.0%})" for s in used) if mixed else main_name
     lang_line = f"Languages spoken: {lang_desc}"
 
-    out_dir, base = vpath.parent, vpath.stem
+    out_dir, base = Path(cfg.get("output_dir") or vpath.parent), vpath.stem
+    out_dir.mkdir(parents=True, exist_ok=True)
     note = ""
     if clip:
         end = offset + info.duration
@@ -2405,7 +2406,7 @@ def run_watch(folder: Path, cfg, model, online, stop_event=None):
     try:
         while not (stop_event and stop_event.is_set()):
             for f in list_videos(folder, recursive):
-                if f in failed or already_done(f):
+                if f in failed or already_done(f, cfg.get("output_dir")):
                     continue
                 try:
                     stt = f.stat()
