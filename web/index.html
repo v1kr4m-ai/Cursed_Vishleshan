@@ -54,11 +54,13 @@
             <label class="checkrow"><input type="checkbox" id="subfolders"> Include subfolders</label>
           </div>
           <div class="rowflex" style="margin-top:14px;">
-            <button id="startBtn" class="startbtn small">Start&ensp;&#9654;</button>
             <label class="optpill" title="The language in the recording. Auto-detect also handles mixed languages.">
               <span>Language</span><select id="spokenSelect"></select></label>
             <label class="optpill" title="Fast speech (songs, rap) is easier for the model when slowed down first. Timestamps stay in original time.">
               <span>Speed</span><select id="speedSelect"></select></label>
+            <button id="startBtn" class="gobtn"><span class="gobtn-label">Start</span>
+              <svg class="gobtn-arrow" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+                   stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
           </div>
         </div>
       </div>
