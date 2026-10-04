@@ -151,7 +151,11 @@ function createDeck(host, o) {
   const deck = host.querySelector(".deck");
   const q = (n) => host.querySelector(`[data-t="${n}"]`);
   const isOpen = () => deck.classList.contains("open");
-  const setOpen = (v) => deck.classList.toggle("open", v);
+  const setOpen = (v) => {
+    if (v) document.querySelectorAll(".deck.open").forEach((d) => { if (d !== deck) { d.classList.remove("open"); d.parentElement.classList.remove("deckhost-open"); } });
+    deck.classList.toggle("open", v);
+    host.classList.toggle("deckhost-open", v);   // lifts this whole deck above the decks below it
+  };
 
   // header click toggles; a click anywhere else on a collapsed card opens it
   host.querySelector(".deck-card").addEventListener("click", (e) => {

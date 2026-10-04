@@ -393,9 +393,11 @@ html, body {
 .deck .checkrow input { accent-color: var(--accent); }
 
 /* an expanded deck floats over the cards below it instead of moving them */
-.deckhost:hover, .deckhost:focus-within { z-index: 20; }
+/* (hovering a host used to give it z 20, tying with the deck below it - the later one then painted
+   over the open card and the two looked mixed together; an opened/hovered deck now always wins) */
 .deck { z-index: 20; }
-.deck:hover, .deck.open { z-index: 40; }
+.deckhost:hover, .deckhost:focus-within, .deckhost.deckhost-open { z-index: 60; }
+.deck:hover, .deck.open { z-index: 60; }
 
 /* model-in-use card: name + a small flag with the number of downloaded models */
 .statnum.withflag { display: flex; align-items: center; gap: 8px; }
