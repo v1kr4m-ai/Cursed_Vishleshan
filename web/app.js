@@ -647,7 +647,7 @@ async function loadCleanupTab() {
     document.getElementById("keyInput").value = "";
   };
   buildFileTool("cuTool", "Clean up", async (src, outDir, speed) =>
-    callApi("start_cleanup_job", src, outDir, cleanupState.noise, speed));
+    callApi("start_cleanup_job", src, outDir, cleanupState.noise, speed, document.getElementById("cuVideoChk").checked));
   buildFileTool("muTool", "Extract music", async (src, outDir, speed) =>
     callApi("start_music_job", src, outDir, speed));
 }

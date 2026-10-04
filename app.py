@@ -793,10 +793,10 @@ class Api:
             vs.save_elevenlabs_key(key.strip())
         return bool(vs.elevenlabs_key())
 
-    def start_cleanup_job(self, src_path, out_dir, noise_mode, speed=None):
+    def start_cleanup_job(self, src_path, out_dir, noise_mode, speed=None, video=False):
         out_dir = Path(out_dir) if out_dir else Path(src_path).parent
         job_id = _run_job(vs._run_cleanup_job, Path(src_path), out_dir, noise_mode, self._online(),
-                          dict(vs.SPEED_CHOICES).get(speed, 1.0))
+                          dict(vs.SPEED_CHOICES).get(speed, 1.0), bool(video))
         JOBS[job_id]["title"] = f"Clean up: {Path(src_path).name}"
         return job_id
 

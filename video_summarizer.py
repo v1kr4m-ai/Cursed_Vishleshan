@@ -599,7 +599,7 @@ def elevenlabs_key():
     return legacy
 
 
-def prepare_audio(video, clip, noise, tmpdir, online=False, speed=None):
+def prepare_audio(video, clip, noise, tmpdir, online=False, speed=None, out_sr=None):
     """Cut the clip range and/or clean up the voice into a temporary WAV for Whisper.
     Returns (path_for_whisper, start_offset_seconds)."""
     noise = {"ai": "studio"}.get(noise, noise or "off")
@@ -627,7 +627,7 @@ def prepare_audio(video, clip, noise, tmpdir, online=False, speed=None):
     if noise in ("off", "light", "strong"):
         out = tmp / "audio.wav"
         af = _with_tempo(NOISE_FILTERS.get(noise, ""), speed)
-        _ff(*cut, "-ac", 1, "-ar", SR, *(["-af", af] if af else []), out)
+        _ff(*cut, "-ac", 1, "-ar", out_sr or SR, *(["-af", af] if af else []), out)
         return str(out), start
 
     # ---- AI cleanup: work on a high-quality copy
@@ -656,7 +656,7 @@ def prepare_audio(video, clip, noise, tmpdir, online=False, speed=None):
             voice = tmp / "strong.wav"
             _ff("-i", iso, "-ac", 1, "-ar", SR, "-af", NOISE_FILTERS["strong"], voice)
     out = tmp / "clean.wav"
-    _ff("-i", voice, "-ac", 1, "-ar", SR, "-af", _with_tempo(FINAL_LEVEL, speed), out)
+    _ff("-i", voice, "-ac", 1, "-ar", out_sr or SR, "-af", _with_tempo(FINAL_LEVEL, speed), out)
     print(f"  Voice cleanup finished in {fmt(time.time() - t0)}.")
     return str(out), start
 
@@ -2430,7 +2430,35 @@ def run_batch(items, cfg, model, online, report_dir: Path):
         open_path(report)
 
 
-def _audio_job_history(kind, title, src_path, out_path, mode, started):
+def has_video_stream(path):
+    """True when the file has a real picture (not just cover art)."""
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return False
+    try:
+        r = subprocess.run([ffprobe, "-v", "error", "-select_streams", "v", "-show_entries",
+                            "stream=index:stream_disposition=attached_pic", "-of", "csv=p=0", str(path)],
+                           capture_output=True, text=True, timeout=60,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:
+        return False
+    return any(line.strip().endswith(",0") for line in r.stdout.splitlines())
+
+
+def mux_clean_video(src_video, clean_audio, out_path):
+    """The original picture with the cleaned voice as its sound track (picture copied, not re-encoded;
+    re-encoded only when the container can't take the original video stream)."""
+    base = ["-i", str(src_video), "-i", str(clean_audio), "-map", "0:v:0", "-map", "1:a:0",
+            "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart"]
+    try:
+        _ff(*base[:6], "-c:v", "copy", *base[6:], out_path)
+    except Exception:
+        print("  (re-encoding the picture - this takes longer)")
+        _ff(*base[:6], "-c:v", "libx264", "-crf", "20", "-preset", "fast", "-pix_fmt", "yuv420p", *base[6:], out_path)
+    return Path(out_path).exists()
+
+
+def _audio_job_history(kind, title, src_path, out_path, mode, started, extra_files=()):
     """History entry for a cleanup / music job: what went in, how, what came out."""
     import wave
     try:
@@ -2442,7 +2470,7 @@ def _audio_job_history(kind, title, src_path, out_path, mode, started):
     details = "\n".join([
         f"Source:   {src_path}", f"Mode:     {mode}", f"Output:   {out_path}",
         f"Length:   {fmt(dur)}", f"Size:     {size:.1f} MB", f"Took:     {fmt(time.time() - started)}"])
-    add_history(kind, title, src_path, mode, dur, [out_path], details)
+    add_history(kind, title, src_path, mode, dur, [out_path, *extra_files], details)
 
 
 def _speed_tag(speed):
@@ -2485,7 +2513,7 @@ def _run_music_job(src_path: Path, out_dir: Path, speed=1.0):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def _run_cleanup_job(src_path: Path, out_dir: Path, noise_mode, online, speed=1.0):
+def _run_cleanup_job(src_path: Path, out_dir: Path, noise_mode, online, speed=1.0, video=False):
     """Standalone voice cleanup: clean one file's audio and save it - no transcription."""
     print(f"Cleaning up: {src_path}\n")
     started = time.time()
@@ -2496,7 +2524,12 @@ def _run_cleanup_job(src_path: Path, out_dir: Path, noise_mode, online, speed=1.
     out_dir.mkdir(parents=True, exist_ok=True)
     tmpdir = Path(tempfile.mkdtemp(prefix="vidsum_clean_"))
     try:
-        audio_src, _ = prepare_audio(src_path, None, noise_mode, tmpdir, online, speed)
+        want_video = bool(video) and has_video_stream(src_path)
+        if want_video and speed < 1.0:
+            print("  (A slowed-down video isn't made - the sound would no longer match the picture.)")
+            want_video = False
+        audio_src, _ = prepare_audio(src_path, None, noise_mode, tmpdir, online, speed,
+                                     out_sr=48000 if want_video else None)
         tag = _speed_tag(speed)
         out_path = out_dir / f"{src_path.stem}_cleaned{tag}.wav"
         n = 2
@@ -2505,9 +2538,19 @@ def _run_cleanup_job(src_path: Path, out_dir: Path, noise_mode, online, speed=1.
             n += 1
         shutil.copyfile(audio_src, out_path)
         print(f"\nSaved: {out_path}")
+        extra = []
+        if want_video:
+            print("Putting the cleaned voice back on the picture...")
+            vid = out_path.with_suffix(".mp4")
+            try:
+                if mux_clean_video(src_path, out_path, vid):
+                    extra.append(vid)
+                    print(f"\nSaved video: {vid}")
+            except Exception as e:
+                print(f"  [!] Could not make the video: {str(e)[:150]}")
         _audio_job_history("cleanup", f"{src_path.stem} - cleaned voice", src_path, out_path,
                            _mode_with_speed(dict((v, k) for k, v in NOISE_CHOICES).get(noise_mode, noise_mode), speed),
-                           started)
+                           started, extra)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
