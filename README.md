@@ -76,6 +76,7 @@ Applied automatically to every feature and also available as a standalone tool.
 | ElevenLabs Voice Isolator | ElevenLabs API | Online |
 
 - **Clean up a file:** pick any audio/video file and an output folder; get a cleaned `.wav`.
+- **Stems:** the *Extract background music* tool can save any mix of Instrumental, Vocals, Drums, Bass and Other in one pass (stereo `.wav`, optional slowdown). Demucs does the separation.
 - **Cleaned video:** when the file you clean up is a video, an option (on by default) also saves `<name>_cleaned.mp4` - the original picture (copied, not re-encoded) with the cleaned voice as its sound. The cleaned audio is made at 48 kHz for this.
 - **Extract background music:** pick a song; Demucs removes the vocals and saves the instrumental as a **stereo** `.wav`.
 - Studio AI falls back step by step (for example to the Strong filter) if a model is missing, rather than failing.
@@ -292,7 +293,6 @@ The ElevenLabs key is encrypted with Windows DPAPI and tied to your Windows acco
 - Subtitle export (`.srt` / `.vtt`) and burned-in subtitles
 - Export summaries to `.docx` / `.pdf`
 - Chapter detection and timestamped key points
-- More stems (drums / bass / other), not just vocals vs. instrumental
 - More backends beyond Claude Code / Ollama / LM Studio
 
 **Platform and distribution**

@@ -357,6 +357,78 @@ def demucs_isolate_music(src44: Path, out: Path):
     return _demucs_run(src44, out, keep="music", mono=False, what="background music")
 
 
+STEM_CHOICES = [("instrumental", "Instrumental (everything but the voice)"), ("vocals", "Vocals"),
+                ("drums", "Drums"), ("bass", "Bass"), ("other", "Other (guitars, keys, synths...)")]
+
+
+def demucs_stems(src44: Path, outdir: Path, stems, _retry=True):
+    """Separate a song into the wanted stems in ONE pass. stems: any of vocals, drums, bass, other,
+    instrumental (= everything but vocals). Writes outdir/<stem>.wav (stereo) and returns {stem: path}."""
+    try:
+        import numpy as np
+        import torch
+        from demucs.pretrained import get_model
+        from demucs.apply import apply_model
+    except ImportError:
+        print("  [i] Separating stems needs:  pip install demucs")
+        return {}
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    name = DEMUCS_MODEL if DEMUCS_MODEL != "auto" else ("htdemucs_ft" if dev == "cuda" else "htdemucs")
+    print(f"  Separating stems with Demucs ({name}, {'GPU' if dev == 'cuda' else 'CPU'}) - "
+          f"the model downloads only the first time, then is reused...")
+    outs = {s: Path(outdir) / f"{s}.wav" for s in stems}
+    writers = {}
+    try:
+        model = get_model(name)
+        model.eval()
+        index = {s: model.sources.index(s) for s in stems if s in model.sources}
+        with wave.open(str(src44), "rb") as r:
+            sr, ch, n = r.getframerate(), r.getnchannels(), r.getnframes()
+            for s, path in outs.items():
+                w = writers[s] = wave.open(str(path), "wb")
+                w.setnchannels(2)
+                w.setsampwidth(2)
+                w.setframerate(sr)
+            step, ctx, t0 = int(DEMUCS_CHUNK_SEC * sr), int(4 * sr), time.time()
+            for start in range(0, n, step):
+                a, b = max(0, start - ctx), min(n, start + step + ctx)
+                r.setpos(a)
+                x = np.frombuffer(r.readframes(b - a), np.int16).reshape(-1, ch).T.astype(np.float32) / 32768
+                if ch == 1:
+                    x = np.vstack([x, x])
+                x = torch.from_numpy(np.ascontiguousarray(x))
+                ref = x.mean(0)
+                m, sd = ref.mean(), ref.std() + 1e-8
+                with torch.no_grad():
+                    y = apply_model(model, ((x - m) / sd)[None], device=dev, split=True,
+                                    overlap=0.25, progress=False)[0]
+                sl = slice(start - a, start - a + min(step, n - start))
+                for s, w in writers.items():
+                    chosen = (y.sum(0) - y[model.sources.index("vocals")]) if s == "instrumental" else y[index[s]]
+                    piece = (chosen * sd + m).cpu().numpy()[:, sl].T.reshape(-1)
+                    w.writeframes((np.clip(piece, -1, 1) * 32767).astype(np.int16).tobytes())
+                done = min(start + step, n) / n
+                el = time.time() - t0
+                print(f"\r    {done:4.0%}  (about {fmt(el / done - el)} left)", end="", flush=True)
+        print()
+        return outs
+    except Exception as e:
+        if dev == "cuda" and _retry and "cudnn" in str(e).lower():
+            print("\n  [i] cuDNN version clash - retrying on the GPU without cuDNN...")
+            torch.backends.cudnn.enabled = False
+            for w in writers.values():
+                w.close()
+            return demucs_stems(src44, outdir, stems, _retry=False)
+        print(f"\n  [!] Separating stems failed ({str(e)[:150]}).")
+        return {}
+    finally:
+        for w in writers.values():
+            try:
+                w.close()
+            except Exception:
+                pass
+
+
 def _demucs_run(src44: Path, out: Path, keep: str, mono: bool, what: str, _retry=True):
     try:
         import numpy as np
@@ -2479,6 +2551,43 @@ def _speed_tag(speed):
 
 def _mode_with_speed(mode, speed):
     return f"{mode}, slowed to {speed:.0%}" if speed < 1.0 else mode
+
+
+def _run_stems_job(src_path: Path, out_dir: Path, stems, speed=1.0):
+    """Standalone: save the chosen stems (vocals / drums / bass / other / instrumental) of a song."""
+    names = [s for s, _ in STEM_CHOICES]
+    stems = [s for s in names if s in (stems or [])] or ["instrumental"]
+    if stems == ["instrumental"]:
+        return _run_music_job(src_path, out_dir, speed)
+    print(f"Separating stems ({', '.join(stems)}): {src_path}" + chr(10))
+    started = time.time()
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tmpdir = Path(tempfile.mkdtemp(prefix="vidsum_stems_"))
+    try:
+        src44 = tmpdir / "src.wav"
+        _ff("-i", str(src_path), "-ac", 2, "-ar", 44100, "-c:a", "pcm_s16le", src44)
+        got = demucs_stems(src44, tmpdir, stems)
+        if not got:
+            print("[!] Could not separate the song - is demucs installed?  pip install demucs")
+            return
+        tag, saved = _speed_tag(speed), []
+        for s in stems:
+            out_path = out_dir / f"{src_path.stem}_{s}{tag}.wav"
+            n = 2
+            while out_path.exists():
+                out_path = out_dir / f"{src_path.stem}_{s}{tag}_{n}.wav"
+                n += 1
+            if speed < 1.0:
+                _ff("-i", got[s], "-af", _with_tempo("", speed), out_path)
+            else:
+                shutil.copyfile(got[s], out_path)
+            saved.append(out_path)
+            print(f"Saved: {out_path}")
+        _audio_job_history("music", f"{src_path.stem} - stems ({', '.join(stems)})", src_path, saved[0],
+                           _mode_with_speed("Demucs stems: " + ", ".join(stems) + " (Offline)", speed), started, saved[1:])
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def _run_music_job(src_path: Path, out_dir: Path, speed=1.0):

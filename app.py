@@ -816,9 +816,10 @@ class Api:
         vs.save_settings(s)
         return True
 
-    def start_music_job(self, src_path, out_dir, speed=None):
+    def start_music_job(self, src_path, out_dir, speed=None, stems=None):
         out_dir = Path(out_dir) if out_dir else Path(src_path).parent
-        job_id = _run_job(vs._run_music_job, Path(src_path), out_dir, dict(vs.SPEED_CHOICES).get(speed, 1.0))
+        job_id = _run_job(vs._run_stems_job, Path(src_path), out_dir, list(stems or ["instrumental"]),
+                          dict(vs.SPEED_CHOICES).get(speed, 1.0))
         JOBS[job_id]["title"] = f"Extract music: {Path(src_path).name}"
         return job_id
 

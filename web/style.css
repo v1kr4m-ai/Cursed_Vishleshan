@@ -467,3 +467,6 @@ html, body {
 /* Round 10: "only this part" range */
 .cliprow { gap: 10px; align-items: center; }
 .cliptime { width: 110px !important; padding: 7px 12px !important; }
+
+/* Round 11: stem choices */
+.stemrow { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; margin: 4px 0 10px; }

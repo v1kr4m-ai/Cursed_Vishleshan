@@ -648,8 +648,10 @@ async function loadCleanupTab() {
   };
   buildFileTool("cuTool", "Clean up", async (src, outDir, speed) =>
     callApi("start_cleanup_job", src, outDir, cleanupState.noise, speed, document.getElementById("cuVideoChk").checked));
-  buildFileTool("muTool", "Extract music", async (src, outDir, speed) =>
-    callApi("start_music_job", src, outDir, speed));
+  buildFileTool("muTool", "Extract music", async (src, outDir, speed) => {
+    const stems = [...document.querySelectorAll("#stemRow input:checked")].map((i) => i.dataset.stem);
+    return callApi("start_music_job", src, outDir, speed, stems.length ? stems : ["instrumental"]);
+  });
 }
 
 function noiseParts(label) {
