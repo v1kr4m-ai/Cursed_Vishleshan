@@ -311,6 +311,22 @@ NOISE_FILTERS = {
     "light": "highpass=f=80,lowpass=f=7600,afftdn=nr=12:nf=-30:tn=1",
     "strong": "highpass=f=100,lowpass=f=7000,afftdn=nr=25:nf=-20:tn=1,afftdn=nr=15:nf=-30",
 }
+# Speech speed: Whisper struggles with very fast speech (rap, songs). Slowing the audio down
+# (pitch kept) before recognition helps. _SPEED is set per job in process_video; all timestamps
+# from the slowed audio are multiplied back by it so they match the original recording.
+SPEED_CHOICES = [("Normal", 1.0), ("Slightly slower (85%)", 0.85), ("Slower (75%)", 0.75),
+                 ("Much slower (65%)", 0.65), ("Half speed (50%)", 0.5)]
+_SPEED = 1.0
+
+
+def _tempo_filter():
+    return f"atempo={_SPEED}" if _SPEED < 1.0 else ""
+
+
+def _with_tempo(af):
+    return ",".join(x for x in (af, _tempo_filter()) if x)
+
+
 FINAL_LEVEL = "highpass=f=70,loudnorm=I=-20:TP=-2:LRA=11"   # even out the volume of the cleaned voice
 DEMUCS_MODEL = "auto"        # "auto" = htdemucs_ft on GPU (best), htdemucs on CPU (4x faster)
 DEMUCS_CHUNK_SEC = 120       # audio is separated in pieces of this length (keeps memory low)
@@ -592,7 +608,7 @@ def prepare_audio(video, clip, noise, tmpdir, online=False):
     noise = {"ai": "studio"}.get(noise, noise or "off")
     start = float(clip[0] or 0) if clip else 0.0
     end = clip[1] if clip else None
-    if not clip and noise == "off":
+    if not clip and noise == "off" and _SPEED >= 1.0:
         return str(video), 0.0
     if not shutil.which("ffmpeg"):
         print("[!] ffmpeg not found - clip range / voice cleanup skipped.")
@@ -601,6 +617,8 @@ def prepare_audio(video, clip, noise, tmpdir, online=False):
     what = []
     if clip:
         what.append(f"part {fmt(start)} - {fmt(end) if end else 'end'}")
+    if _SPEED < 1.0:
+        what.append(f"slowed to {_SPEED:.0%} speed")
     if noise != "off":
         what.append("voice cleanup: " + dict((v, k) for k, v in NOISE_CHOICES)[noise])
     print("Preparing audio (" + ", ".join(what) + ")...")
@@ -610,7 +628,8 @@ def prepare_audio(video, clip, noise, tmpdir, online=False):
 
     if noise in ("off", "light", "strong"):
         out = tmp / "audio.wav"
-        _ff(*cut, "-ac", 1, "-ar", SR, *(["-af", NOISE_FILTERS[noise]] if noise in NOISE_FILTERS else []), out)
+        af = _with_tempo(NOISE_FILTERS.get(noise, ""))
+        _ff(*cut, "-ac", 1, "-ar", SR, *(["-af", af] if af else []), out)
         return str(out), start
 
     # ---- AI cleanup: work on a high-quality copy
@@ -639,7 +658,7 @@ def prepare_audio(video, clip, noise, tmpdir, online=False):
             voice = tmp / "strong.wav"
             _ff("-i", iso, "-ac", 1, "-ar", SR, "-af", NOISE_FILTERS["strong"], voice)
     out = tmp / "clean.wav"
-    _ff("-i", voice, "-ac", 1, "-ar", SR, "-af", FINAL_LEVEL, out)
+    _ff("-i", voice, "-ac", 1, "-ar", SR, "-af", _with_tempo(FINAL_LEVEL), out)
     print(f"  Voice cleanup finished in {fmt(time.time() - t0)}.")
     return str(out), start
 
@@ -1025,7 +1044,7 @@ def detect_languages(model, video):
         except Exception:
             continue
         if prob >= 0.5:
-            results.append((s / SR, code, prob))
+            results.append((s / SR * _SPEED, code, prob))
     print()
     del audio
     return results
@@ -1123,6 +1142,15 @@ class LoopGuard:
         return self.n >= 2
 
 
+def _scaled_info(info):
+    """Whisper info for slowed audio, with the duration put back to original-recording time."""
+    if _SPEED >= 1.0:
+        return info
+    import types
+    return types.SimpleNamespace(duration=info.duration * _SPEED, language=info.language,
+                                 language_probability=info.language_probability)
+
+
 def transcribe(model, video, language, multilingual=False, detections=None, offset=0.0, noisy=False):
     """offset = where the audio starts inside the full video (clip range), added to timestamps."""
     kwargs = {"language": language, "task": "transcribe"}
@@ -1130,6 +1158,7 @@ def transcribe(model, video, language, multilingual=False, detections=None, offs
         kwargs["multilingual"] = True
     kwargs.update(decode_kwargs(model, noisy))
     segments, info = model.transcribe(video, **kwargs)
+    info = _scaled_info(info)
     print(f"Duration: {fmt(info.duration)}")
     print("Transcribing...")
 
@@ -1145,7 +1174,7 @@ def transcribe(model, video, language, multilingual=False, detections=None, offs
         if unclear(seg):
             text += " [unclear]"
             marked += 1
-        t = seg.start + offset
+        t = seg.start * _SPEED + offset
         prefix = ""
         if detections:  # mixed-language video: mark where the language changes
             idx = max(0, sum(1 for d in det_times if d <= t) - 1)
@@ -1155,7 +1184,7 @@ def transcribe(model, video, language, multilingual=False, detections=None, offs
                 prev = code
         stamped.append(f"[{fmt(t)}] {prefix}{text}")
         plain.append(text)
-        print(f"\r  {fmt(seg.end)} / {fmt(info.duration)}", end="", flush=True)
+        print(f"\r  {fmt(seg.end * _SPEED)} / {fmt(info.duration)}", end="", flush=True)
     print()
     if dropped:
         print(f"  Removed {dropped} made-up / repeated line(s) (typical Whisper noise artefacts).")
@@ -1171,8 +1200,8 @@ def whisper_translate_english(model, video, language, offset=0.0, noisy=False):
     lines, guard = [], LoopGuard()
     for seg in segments:
         if seg.text.strip() and not is_hallucination(seg.text, seg) and not guard.repeat(seg.text):
-            lines.append(f"[{fmt(seg.start + offset)}] {seg.text.strip()}")
-            print(f"\r  {fmt(seg.end)} / {fmt(info.duration)}", end="", flush=True)
+            lines.append(f"[{fmt(seg.start * _SPEED + offset)}] {seg.text.strip()}")
+            print(f"\r  {fmt(seg.end * _SPEED)} / {fmt(info.duration * _SPEED)}", end="", flush=True)
     print()
     return "\n".join(lines)
 
@@ -1652,11 +1681,14 @@ def process_video(vpath: Path, cfg, model, online, kind="file", source=None, ope
     _notes_cache.clear()
     print(f"\nProcessing: {vpath}\n")
     clip = cfg.get("clip")
+    global _SPEED
+    _SPEED = min(max(float(cfg.get("speed") or 1.0), 0.5), 1.0)
     tmpdir = Path(tempfile.mkdtemp(prefix="vidsum_audio_"))
     try:
         audio_src, offset = prepare_audio(vpath, clip, cfg.get("noise", "off"), tmpdir, online)
         return _process(vpath, audio_src, offset, clip, cfg, model, online, kind, source, open_result)
     finally:
+        _SPEED = 1.0
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
@@ -1694,6 +1726,8 @@ def _process(vpath, audio_src, offset, clip, cfg, model, online, kind, source, o
         end = offset + info.duration
         base += f"_part_{fmt(offset).replace(':', '-')}_to_{fmt(end).replace(':', '-')}"
         note = f"Part of the video: {fmt(offset)} to {fmt(end)}\n"
+    if _SPEED < 1.0:
+        note += f"Audio slowed to {_SPEED:.0%} speed for recognition (timestamps are original time)\n"
     if noisy:
         note += f"Voice cleanup: {dict((v, k) for k, v in NOISE_CHOICES).get(cfg['noise'], cfg['noise'])}\n"
     files = []

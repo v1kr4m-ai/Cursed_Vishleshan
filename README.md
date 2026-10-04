@@ -47,6 +47,7 @@ A Windows desktop app that **transcribes, translates and summarizes** video, aud
 - **Spoken-language detection** over the whole recording. Mixed-language audio is transcribed piece by piece in each detected language.
 - **Custom vocabulary** (names, terms, abbreviations) that Whisper is nudged toward and that translations/summaries keep.
 - Hallucination and repetition filtering on silent or noisy stretches.
+- **Speech speed:** slow fast speech (songs, rap) down to 85-50% before recognition, pitch kept; timestamps stay in original time.
 
 ### Translation and summaries
 Tried in order; the first engine that works wins (order and on/off are configurable in Offline Settings):

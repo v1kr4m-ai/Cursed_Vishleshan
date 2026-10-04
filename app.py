@@ -183,6 +183,8 @@ class Api:
                 (m["name"] for m in models if m["downloaded"]), None),
             "spokenLanguage": vs.lang_name(spoken_code) if spoken_code else "Auto-detect",
             "spokenChoices": vs.SPOKEN_CHOICES,
+            "speedChoices": [n for n, _ in vs.SPEED_CHOICES],
+            "speed": next((n for n, v in vs.SPEED_CHOICES if v == saved.get("speed", 1.0)), vs.SPEED_CHOICES[0][0]),
             "outputChoices": vs.OUTPUT_CHOICES,
             "outputs": saved.get("outputs", vs.OUTPUT_LANGUAGES),
             "mode": saved.get("mode", "file"),
@@ -200,6 +202,7 @@ class Api:
             "model": data.get("model"),
             "language": None if data.get("spokenLanguage", "Auto-detect") == "Auto-detect"
                         else vs.LANG_CODES.get(data.get("spokenLanguage")),
+            "speed": dict(vs.SPEED_CHOICES).get(data.get("speed"), 1.0),
             "outputs": data.get("outputs", []),
             "mode": data.get("mode", "file"),
             "skip_done": bool(data.get("skipDone", True)),

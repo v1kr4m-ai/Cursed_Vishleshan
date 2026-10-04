@@ -26,6 +26,8 @@ const MOCK_HOME = {
   ],
   selectedModel: "small",
   spokenLanguage: "Auto-detect",
+  speedChoices: ["Normal", "Slightly slower (85%)", "Slower (75%)", "Much slower (65%)", "Half speed (50%)"],
+  speed: "Normal",
   spokenChoices: ["Auto-detect", "English", "Hindi", "Urdu", "French", "German", "Spanish"],
   outputChoices: ["Original", "English", "Hindi", "Urdu", "French", "German", "Spanish"],
   outputs: ["Original", "English"],
@@ -339,6 +341,9 @@ function renderSpoken() {
   sel.innerHTML = state.spokenChoices.map((c) =>
     `<option ${c === state.spokenLanguage ? "selected" : ""}>${c}</option>`).join("");
   sel.addEventListener("change", () => { state.spokenLanguage = sel.value; persistHome(); });
+  const sp = document.getElementById("speedSelect");
+  sp.innerHTML = state.speedChoices.map((c) => `<option ${c === state.speed ? "selected" : ""}>${c}</option>`).join("");
+  sp.addEventListener("change", () => { state.speed = sp.value; persistHome(); });
 }
 
 // Output languages: same stack-of-cards behaviour as the model deck (hover peeks, click pins open)
@@ -439,6 +444,7 @@ function persistHome() {
   return callApi("save_home", {
     model: state.selectedModel,
     spokenLanguage: state.spokenLanguage,
+    speed: state.speed,
     outputs: state.outputs,
     mode: state.mode,
     skipDone: document.getElementById("skipDone").checked,
