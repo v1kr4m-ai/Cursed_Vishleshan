@@ -517,6 +517,7 @@ function addJobPanel(tab, jobId, title, stoppable) {
   wrap.innerHTML = `<div class="joblog-head"><span>${title}</span>
       <span class="joblog-actions">
         ${stoppable ? '<button class="ghostbtn tiny" data-a="stop">Stop</button>' : ""}
+        <button class="ghostbtn tiny" data-a="cancel" style="display:none;">Cancel</button>
         <span class="joblog-status">Running...</span>
       </span></div>
     <pre class="joblog-body"></pre>`;
@@ -527,6 +528,12 @@ function addJobPanel(tab, jobId, title, stoppable) {
     wrap.querySelector('[data-a="stop"]').addEventListener("click", () => callApi("stop_watch_job", jobId));
   }
 
+  const cancelBtn = wrap.querySelector('[data-a="cancel"]');
+  let cancelled = false;
+  cancelBtn.addEventListener("click", async () => {
+    cancelled = await callApi("cancel_job", jobId);
+  });
+
   let offset = 0;
   const tick = async () => {
     const r = await callApi("get_job_log", jobId, offset);
@@ -536,13 +543,15 @@ function addJobPanel(tab, jobId, title, stoppable) {
       offset = r.nextOffset;
     }
     if (r.done) {
-      statusEl.textContent = "Done";
+      statusEl.textContent = cancelled ? "Cancelled" : "Done";
       statusEl.classList.add("done");
+      cancelBtn.style.display = "none";
       tab.jobDone();
       wrap.classList.add("finished");
       return;
     }
     statusEl.textContent = r.queued ? `Queued - ${r.queued} ahead` : "Running...";
+    cancelBtn.style.display = r.queued ? "" : "none";
     setTimeout(tick, 500);
   };
   tick();
