@@ -33,6 +33,7 @@ const MOCK_HOME = {
   outputs: ["Original", "English"],
   mode: "file",
   skipDone: true,
+  subtitles: "srt",
   subfolders: false,
   speakSave: false,
   onlineReal: true,
@@ -394,6 +395,9 @@ function renderSources() {
   }));
   document.getElementById("urlRow").style.display = state.mode === "url" ? "flex" : "none";
   document.getElementById("skipDone").checked = state.skipDone;
+  const subsSel = document.getElementById("subsSelect");
+  subsSel.value = state.subtitles || "srt";
+  subsSel.onchange = () => { state.subtitles = subsSel.value; persistHome(); };
   document.getElementById("subfolders").checked = state.subfolders;
 }
 
@@ -448,6 +452,7 @@ function persistHome() {
     outputs: state.outputs,
     mode: state.mode,
     skipDone: document.getElementById("skipDone").checked,
+    subtitles: state.subtitles,
     subfolders: document.getElementById("subfolders").checked,
     speakSave: state.speakSave,
   });

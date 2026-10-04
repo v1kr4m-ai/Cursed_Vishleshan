@@ -55,6 +55,7 @@ import socket
 import fnmatch
 import inspect
 import tempfile
+import textwrap
 import threading
 import subprocess
 import urllib.request
@@ -1167,6 +1168,7 @@ def transcribe(model, video, language, multilingual=False, detections=None, offs
     det_times = [d[0] for d in detections] if detections else []
     stamped, plain, prev, guard, dropped, marked = [], [], None, LoopGuard(), 0, 0
     raw_stamped, raw_plain, rprev = [], [], None   # the exact transcript: every line, untouched
+    raw_segs = []                                   # (start, end, text) in original-recording time, for subtitles
     for seg in segments:
         text = seg.text.strip()
         if not text:
@@ -1178,6 +1180,7 @@ def transcribe(model, video, language, multilingual=False, detections=None, offs
         rprev = rcode or rprev
         raw_stamped.append(f"[{fmt(rt)}] {rpre}{text}")
         raw_plain.append(text)
+        raw_segs.append((rt, seg.end * _SPEED + offset, text))
         if is_hallucination(text, seg) or guard.repeat(text):
             dropped += 1
             continue
@@ -1200,7 +1203,7 @@ def transcribe(model, video, language, multilingual=False, detections=None, offs
         print(f"  Filtered copy: {dropped} made-up / repeated line(s) removed (the exact transcript keeps them).")
     if marked:
         print(f"  Filtered copy: {marked} line(s) marked [unclear].")
-    return raw_stamped, " ".join(raw_plain), info, stamped, dropped, marked
+    return raw_stamped, " ".join(raw_plain), info, stamped, dropped, marked, raw_segs
 
 
 def whisper_translate_english(model, video, language, offset=0.0, noisy=False):
@@ -1536,6 +1539,61 @@ def stamped_from_entries(entries):
 
 
 # ---------------------------------------------------------------- output files
+# ---------------------------------------------------------------- subtitles (.srt / .vtt)
+def _sub_time(t, comma):
+    ms = int(round(max(t, 0) * 1000))
+    h, ms = divmod(ms, 3600000)
+    m, ms = divmod(ms, 60000)
+    s, ms = divmod(ms, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d}{',' if comma else '.'}{ms:03d}"
+
+
+def _sub_text(text, width=42):
+    """Wrap to at most two balanced-ish lines of ~width characters, the usual subtitle shape."""
+    lines = textwrap.wrap(text, width=width) or [text]
+    if len(lines) > 2:
+        lines = textwrap.wrap(text, width=max(width, -(-len(text) // 2) + 6))[:2] or lines[:2]
+    return chr(10).join(lines)
+
+
+def write_subtitles(base_path, segs, fmts):
+    """segs = [(start, end, text)]. Writes base_path.srt and/or .vtt per `fmts` (e.g. 'srt', 'vtt', 'both').
+    Returns the files written."""
+    if not segs or fmts in (None, "", "none"):
+        return []
+    out = []
+    nl = chr(10)
+    cues = []
+    for i, (a, b, text) in enumerate(segs):
+        nxt = segs[i + 1][0] if i + 1 < len(segs) else None
+        b = max(b, a + 0.8)
+        if nxt is not None and b > nxt:
+            b = max(nxt - 0.02, a + 0.3)
+        cues.append((a, b, _sub_text(text)))
+    if fmts in ("srt", "both"):
+        p = Path(f"{base_path}.srt")
+        p.write_text(nl.join(f"{i}{nl}{_sub_time(a, True)} --> {_sub_time(b, True)}{nl}{t}{nl}"
+                             for i, (a, b, t) in enumerate(cues, 1)), encoding="utf-8")
+        out.append(p)
+    if fmts in ("vtt", "both"):
+        p = Path(f"{base_path}.vtt")
+        p.write_text("WEBVTT" + nl + nl + nl.join(f"{_sub_time(a, False)} --> {_sub_time(b, False)}{nl}{t}{nl}"
+                                                   for a, b, t in cues), encoding="utf-8")
+        out.append(p)
+    return out
+
+
+def segs_from_stamped(text, total_end):
+    """Rebuild (start, end, text) from '[HH:MM:SS] text' lines (used for translated transcripts)."""
+    rows = []
+    for line in text.splitlines():
+        m = re.match(r"^\[(\d\d):(\d\d):(\d\d)\]\s*(?:\([^)]*\)\s*)?(.*)$", line)
+        if m and m.group(4).strip():
+            rows.append((int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3)), m.group(4).strip()))
+    return [(t, rows[i + 1][0] if i + 1 < len(rows) else max(total_end, t + 3), x)
+            for i, (t, x) in enumerate(rows)]
+
+
 def write_transcript(path, video_name, lang_line, duration, stamped_text, note=""):
     plain = re.sub(r"^\[\d\d:\d\d:\d\d\]\s*(\([^)]*\)\s*)?", "", stamped_text, flags=re.M)
     plain = " ".join(l.strip() for l in plain.splitlines() if l.strip())
@@ -1716,7 +1774,7 @@ def _process(vpath, audio_src, offset, clip, cfg, model, online, kind, source, o
             print("This video mixes languages - each part will be transcribed in its own language.\n")
 
     # ---- Original transcript
-    raw_stamped, _, info, stamped, dropped, marked = transcribe(
+    raw_stamped, _, info, stamped, dropped, marked, raw_segs = transcribe(
         model, audio_src, cfg["language"],
         multilingual=(mixed and cfg["language"] is None),
         detections=detections if mixed else None, offset=offset, noisy=noisy)
@@ -1751,6 +1809,10 @@ def _process(vpath, audio_src, offset, clip, cfg, model, online, kind, source, o
     write_transcript(orig_file, vpath.name, lang_line, info.duration, exact,
                      note + "Exact transcript: every word as the speech model heard it, nothing removed." + chr(10))
     files.append(orig_file)
+    subs = cfg.get("subtitles", "srt")
+    for f in write_subtitles(out_dir / f"{base}_subtitles", raw_segs, subs):
+        files.append(f)
+        print(f"Subtitles saved: {f}")
     if body != exact:   # extra copy: made-up/repeated lines removed, [unclear] marks; used for translations/summaries
         filt_file = out_dir / f"{base}_transcript_filtered.txt"
         write_transcript(filt_file, vpath.name, lang_line, info.duration, body,
@@ -1785,6 +1847,10 @@ def _process(vpath, audio_src, offset, clip, cfg, model, online, kind, source, o
         write_transcript(f, vpath.name, f"{lang_line}  |  Translated to {name} by {by}",
                          info.duration, text, note)
         files.append(f)
+        for sf in write_subtitles(out_dir / f"{base}_subtitles_{safe_name(name)}",
+                                  segs_from_stamped(text, raw_segs[-1][1] if raw_segs else 0), subs):
+            files.append(sf)
+            print(f"Subtitles saved: {sf}")
         print(f"Translation saved: {f}\n")
         if cfg.get("speak_save"):
             plain = re.sub(r"^\[\d\d:\d\d:\d\d\]\s*(\([^)]*\)\s*)?", "", text, flags=re.M)

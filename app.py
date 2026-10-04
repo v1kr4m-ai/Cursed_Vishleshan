@@ -212,6 +212,7 @@ class Api:
             "skipDone": bool(saved.get("skip_done", True)),
             "subfolders": bool(saved.get("subfolders", False)),
             "speakSave": bool(saved.get("speak_save", False)),
+            "subtitles": saved.get("subtitles", "srt"),
             "onlineReal": online0,
             "onlinePref": bool(saved.get("mode_online", online0)),
             "noiseLabel": _noise_label(saved.get("noise", "off")),
@@ -229,6 +230,7 @@ class Api:
             "skip_done": bool(data.get("skipDone", True)),
             "subfolders": bool(data.get("subfolders", False)),
             "speak_save": bool(data.get("speakSave", False)),
+            "subtitles": data.get("subtitles", "srt") if data.get("subtitles") in ("none", "srt", "vtt", "both") else "srt",
         })
         vs.save_settings(s)
         return True

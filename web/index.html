@@ -52,6 +52,10 @@
           <div class="rowflex">
             <label class="checkrow"><input type="checkbox" id="skipDone"> Folders: skip already done</label>
             <label class="checkrow"><input type="checkbox" id="subfolders"> Include subfolders</label>
+            <label class="checkrow" title="Subtitle files made next to the transcript">Subtitles
+              <select id="subsSelect" class="select" style="width:auto;padding:5px 10px;">
+                <option value="srt">.srt</option><option value="vtt">.vtt</option>
+                <option value="both">.srt + .vtt</option><option value="none">none</option></select></label>
           </div>
           <div class="rowflex" style="margin-top:14px;">
             <label class="optpill" title="The language in the recording. Auto-detect also handles mixed languages.">
