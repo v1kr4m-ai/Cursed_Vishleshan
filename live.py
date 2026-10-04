@@ -567,19 +567,18 @@ class LiveSession:
                     (tmp / ch["key"]).mkdir(exist_ok=True)
                     path, _ = vs.prepare_audio(raw, None, level, tmp / ch["key"], self.online, speed)
                     m = S["model"]
-                    kw = vs.decode_kwargs(m, noisy=True)
+                    kw = vs.decode_kwargs(m, noisy=True, raw=True)   # exact words, nothing skipped
                     if not self.cfg["language"] and "multilingual" in inspect.signature(m.transcribe).parameters:
                         kw["multilingual"] = True
                     self._emit("speech", f"{ch['label'] or self.src_name}: transcribing the cleaned audio...")
                     with self.model_lock:
                         segs, info = m.transcribe(path, language=self.cfg["language"], **kw)
-                        guard = vs.LoopGuard()
                         for s_ in segs:
                             t_ = s_.text.strip()
-                            if not t_ or vs.is_hallucination(t_, s_) or guard.repeat(t_):
+                            if not t_:
                                 continue
                             new.append({"t": s_.start * speed, "lang": self.cfg["language"] or info.language,
-                                        "text": t_ + (" [unclear]" if vs.unclear(s_) else ""),
+                                        "text": t_,
                                         "who": ch["label"], "dur": max((s_.end - s_.start) * speed, 0.5)})
                 shutil.rmtree(tmp, ignore_errors=True)
                 new.sort(key=lambda e: e["t"])

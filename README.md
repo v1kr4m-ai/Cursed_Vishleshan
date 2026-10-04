@@ -195,7 +195,8 @@ Next to each source file:
 
 | File | Content |
 |---|---|
-| `<name>_transcript.txt` | Transcript in the original language |
+| `<name>_transcript.txt` | **Exact transcript** in the original language: every word as Whisper heard it, nothing removed or marked |
+| `<name>_transcript_filtered.txt` | Extra copy (only written when it differs): made-up / repeated lines removed, `[unclear]` marks. Translations and summaries are made from this copy |
 | `<name>_transcript_<Language>.txt` | One per chosen translation |
 | `<name>_summary[_<Language>].md` | Summary (per language) |
 | `<name>_cleaned_voice.wav` | Optional, the cleaned voice |

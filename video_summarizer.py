@@ -1093,14 +1093,19 @@ MARK_UNCLEAR = True          # add [unclear] to lines Whisper is unsure about
 UNCLEAR_LOGPROB = -0.9       # lower = only very unsure lines get marked
 
 
-def decode_kwargs(model, noisy):
-    """Whisper settings. 'noisy' = safer decoding for rough audio (fewer made-up words)."""
+def decode_kwargs(model, noisy, raw=False):
+    """Whisper settings. 'noisy' = safer decoding for rough audio (fewer made-up words).
+    raw = the exact-transcript settings: nothing is skipped (no voice-activity cut, no
+    silence/confidence cut-offs) and no custom-vocabulary nudging, so Whisper writes what it hears."""
     k = {"vad_filter": True, "beam_size": 5}
-    if noisy:
+    if raw:
+        k = {"vad_filter": False, "beam_size": 5, "no_speech_threshold": None, "log_prob_threshold": None}
+    elif noisy:
         k.update(best_of=5, condition_on_previous_text=False,   # stops runaway repeated lines
                  no_speech_threshold=0.6, compression_ratio_threshold=2.2, log_prob_threshold=-1.0,
                  vad_parameters={"threshold": 0.4, "min_silence_duration_ms": 600, "speech_pad_ms": 400})
-    k.update(vocab_kwargs(model))
+    if not raw:
+        k.update(vocab_kwargs(model))
     try:
         ok = inspect.signature(model.transcribe).parameters
         if not any(p.kind == p.VAR_KEYWORD for p in ok.values()):
@@ -1153,7 +1158,7 @@ def transcribe(model, video, language, multilingual=False, detections=None, offs
     kwargs = {"language": language, "task": "transcribe"}
     if multilingual and "multilingual" in inspect.signature(model.transcribe).parameters:
         kwargs["multilingual"] = True
-    kwargs.update(decode_kwargs(model, noisy))
+    kwargs.update(decode_kwargs(model, noisy, raw=True))
     segments, info = model.transcribe(video, **kwargs)
     info = _scaled_info(info)
     print(f"Duration: {fmt(info.duration)}")
@@ -1161,10 +1166,18 @@ def transcribe(model, video, language, multilingual=False, detections=None, offs
 
     det_times = [d[0] for d in detections] if detections else []
     stamped, plain, prev, guard, dropped, marked = [], [], None, LoopGuard(), 0, 0
+    raw_stamped, raw_plain, rprev = [], [], None   # the exact transcript: every line, untouched
     for seg in segments:
         text = seg.text.strip()
         if not text:
             continue
+        rt, rcode = seg.start * _SPEED + offset, None
+        if detections:
+            rcode = detections[max(0, sum(1 for d in det_times if d <= rt) - 1)][1]
+        rpre = f"({lang_name(rcode)}) " if rcode and rcode != rprev else ""
+        rprev = rcode or rprev
+        raw_stamped.append(f"[{fmt(rt)}] {rpre}{text}")
+        raw_plain.append(text)
         if is_hallucination(text, seg) or guard.repeat(text):
             dropped += 1
             continue
@@ -1184,10 +1197,10 @@ def transcribe(model, video, language, multilingual=False, detections=None, offs
         print(f"\r  {fmt(seg.end * _SPEED)} / {fmt(info.duration)}", end="", flush=True)
     print()
     if dropped:
-        print(f"  Removed {dropped} made-up / repeated line(s) (typical Whisper noise artefacts).")
+        print(f"  Filtered copy: {dropped} made-up / repeated line(s) removed (the exact transcript keeps them).")
     if marked:
-        print(f"  {marked} line(s) marked [unclear] - check those parts by ear.")
-    return stamped, " ".join(plain), info
+        print(f"  Filtered copy: {marked} line(s) marked [unclear].")
+    return raw_stamped, " ".join(raw_plain), info, stamped, dropped, marked
 
 
 def whisper_translate_english(model, video, language, offset=0.0, noisy=False):
@@ -1703,7 +1716,7 @@ def _process(vpath, audio_src, offset, clip, cfg, model, online, kind, source, o
             print("This video mixes languages - each part will be transcribed in its own language.\n")
 
     # ---- Original transcript
-    stamped, _, info = transcribe(
+    raw_stamped, _, info, stamped, dropped, marked = transcribe(
         model, audio_src, cfg["language"],
         multilingual=(mixed and cfg["language"] is None),
         detections=detections if mixed else None, offset=offset, noisy=noisy)
@@ -1734,8 +1747,17 @@ def _process(vpath, audio_src, offset, clip, cfg, model, online, kind, source, o
         files.append(clean)
         print(f"Cleaned voice saved: {clean}  (listen to check the cleanup)")
     orig_file = out_dir / f"{base}_transcript.txt"
-    write_transcript(orig_file, vpath.name, lang_line, info.duration, body, note)
+    exact = chr(10).join(raw_stamped)
+    write_transcript(orig_file, vpath.name, lang_line, info.duration, exact,
+                     note + "Exact transcript: every word as the speech model heard it, nothing removed." + chr(10))
     files.append(orig_file)
+    if body != exact:   # extra copy: made-up/repeated lines removed, [unclear] marks; used for translations/summaries
+        filt_file = out_dir / f"{base}_transcript_filtered.txt"
+        write_transcript(filt_file, vpath.name, lang_line, info.duration, body,
+                         note + f"Filtered copy: {dropped} made-up/repeated line(s) removed, {marked} marked [unclear]. "
+                         "Translations and summaries are made from this copy." + chr(10))
+        files.append(filt_file)
+        print(f"Filtered copy saved: {filt_file}")
     print(f"Transcript saved: {orig_file}\n")
 
     # ---- Output languages
