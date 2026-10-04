@@ -20,6 +20,17 @@ if sys.stdout is None or sys.stderr is None:
     sys.stdout = sys.stdout or _log
     sys.stderr = sys.stderr or _log
 
+# Same reason: without a console of its own, every ffmpeg / claude / lms child process would pop up
+# a console window. Make "no window" the default for all child processes (ours and libraries').
+if sys.platform == "win32":
+    import subprocess
+    _popen_init = subprocess.Popen.__init__
+
+    def _quiet_popen(self, *a, **kw):
+        kw["creationflags"] = kw.get("creationflags", 0) | subprocess.CREATE_NO_WINDOW
+        _popen_init(self, *a, **kw)
+    subprocess.Popen.__init__ = _quiet_popen
+
 import shutil
 import threading
 import uuid
