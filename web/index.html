@@ -55,22 +55,16 @@
           </div>
           <div class="rowflex" style="margin-top:14px;">
             <button id="startBtn" class="startbtn small">Start&ensp;&#9654;</button>
-            <span class="muted small">Each run opens in its own tab at the top, so you can switch back and forth.</span>
+            <label class="optpill" title="The language in the recording. Auto-detect also handles mixed languages.">
+              <span>Language</span><select id="spokenSelect"></select></label>
+            <label class="optpill" title="Fast speech (songs, rap) is easier for the model when slowed down first. Timestamps stay in original time.">
+              <span>Speed</span><select id="speedSelect"></select></label>
           </div>
         </div>
       </div>
 
       <div class="sidecol">
         <div id="modelDeck" class="deckhost"></div>
-      <div class="card">
-        <h2>Spoken language</h2>
-        <select id="spokenSelect" class="select"></select>
-        <p class="muted small">The language in the recording. Auto-detect also handles mixed languages.</p>
-        <label class="small muted">Speech speed</label>
-        <select id="speedSelect" class="select"></select>
-        <p class="muted small">Fast speech (songs, rap) is easier for the model when slowed down first. Timestamps stay in original time.</p>
-      </div>
-
       <div id="outputDeck" class="deckhost"></div>
 
       </div>

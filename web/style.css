@@ -404,3 +404,9 @@ html, body {
   flex: none; font-size: 11px; font-weight: 700; line-height: 1; padding: 4px 8px; border-radius: 999px;
   background: var(--accent); color: var(--accent-ink);
 }
+
+/* Round 5: language / speed pills next to Start */
+.optpill { display: inline-flex; align-items: center; gap: 8px; padding: 4px 6px 4px 14px; border-radius: 999px;
+  background: #f1f2f5; font-size: 12.5px; color: var(--muted, #7a7f8a); }
+.optpill select { border: 0; background: #fff; border-radius: 999px; padding: 7px 10px; font: inherit; color: #16181d;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08); cursor: pointer; max-width: 190px; }
