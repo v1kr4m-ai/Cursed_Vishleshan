@@ -36,3 +36,7 @@ noisereduce
 
 # ---- Optional: speaker labels (offline speaker detection) ----
 sherpa-onnx==1.13.8
+
+# ---- Optional: export summaries to Word / PDF ----
+python-docx==1.2.0
+markdown-it-py==4.0.0

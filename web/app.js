@@ -36,6 +36,7 @@ const MOCK_HOME = {
   mode: "file",
   skipDone: true,
   subtitles: "srt",
+  export: "none",
   chapters: false,
   wordTiming: false,
   subfolders: false,
@@ -416,6 +417,9 @@ function renderSources() {
   };
   chk("chaptersChk", "chapters");
   chk("wordsChk", "wordTiming");
+  const expSel = document.getElementById("exportSelect");
+  expSel.value = state.export || "none";
+  expSel.onchange = () => { state.export = expSel.value; persistHome(); };
   const subsSel = document.getElementById("subsSelect");
   subsSel.value = state.subtitles || "srt";
   subsSel.onchange = () => { state.subtitles = subsSel.value; persistHome(); };
@@ -475,6 +479,7 @@ function persistHome() {
     mode: state.mode,
     skipDone: document.getElementById("skipDone").checked,
     subtitles: state.subtitles,
+    export: state.export,
     chapters: state.chapters,
     wordTiming: state.wordTiming,
     subfolders: document.getElementById("subfolders").checked,
@@ -827,6 +832,22 @@ async function showHistoryFile() {
   const f = historySelected.files.find((x) => x.name === sel.value) || historySelected.files[0];
   const text = (f ? await callApi("read_history_file", f.path) : "") || historySelected.details || "";
   renderHistoryText(text);
+  const isSummary = !!f && /_summary[^\\/]*\.md$/i.test(f.name);
+  document.getElementById("historyWordBtn").style.display = isSummary ? "" : "none";
+  document.getElementById("historyPdfBtn").style.display = isSummary ? "" : "none";
+}
+
+for (const [id, fmt] of [["historyWordBtn", "docx"], ["historyPdfBtn", "pdf"]]) {
+  document.getElementById(id).addEventListener("click", async (e) => {
+    const sel = document.getElementById("historyFileSelect");
+    const f = historySelected && historySelected.files.find((x) => x.name === sel.value);
+    if (!f) return;
+    const btn = e.currentTarget, label = btn.textContent;
+    btn.disabled = true; btn.textContent = "Exporting...";
+    const r = await callApi("export_file", f.path, fmt);
+    btn.disabled = false; btn.textContent = label;
+    toast(r && r.ok ? `Saved ${r.name}` : ((r && r.message) || "Export failed"));
+  });
 }
 
 // Timestamped transcript lines ("[00:01:23] ...") become clickable: they play the recording from there.

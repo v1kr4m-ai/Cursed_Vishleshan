@@ -48,6 +48,7 @@ A Windows desktop app that **transcribes, translates and summarizes** video, aud
 - **Custom vocabulary** (names, terms, abbreviations) that Whisper is nudged toward and that translations/summaries keep.
 - Hallucination and repetition filtering on silent or noisy stretches.
 - **Speaker labels:** optional *Speakers* setting (Off / Auto-detect / 2-6) adds `Speaker 1:`, `Speaker 2:` to the transcript, subtitles and summaries. Runs offline with sherpa-onnx; two small models (~46 MB) download once.
+- **Export to Word / PDF:** *Export* setting on Home saves each summary (plus the chapters, if enabled) as `.docx` and/or `.pdf` next to it; History has **Export Word / Export PDF** buttons for any past summary. PDFs are printed by Microsoft Edge, so Hindi, Urdu, Arabic and other scripts render correctly.
 - **Chapters & key points:** optional checkbox on Home. Writes `<name>_chapters.md` with timestamped chapters (YouTube-style list) and key points under each, in the first output language. Uses the summary AI, so it adds time.
 - **Word timing:** optional checkbox. Writes `<name>_words.csv` (every word with start/end time, confidence, speaker) and cuts long subtitle cues at natural pauses.
 - **Subtitles:** `.srt` and/or `.vtt` for the original and every translation.

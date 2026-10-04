@@ -2137,6 +2137,18 @@ def _process(vpath, audio_src, offset, clip, cfg, model, online, kind, source, o
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
+    exp = cfg.get("export", "none")
+    if exp not in (None, "", "none") and summaries:
+        import exporter
+        ch_file = out_dir / f"{base}_chapters.md"
+        for k, (_, sf, _) in enumerate(summaries):
+            try:
+                for ef in exporter.export_summary(sf, exp, ch_file if k == 0 else None):
+                    files.append(ef)
+                    print(f"Exported: {ef}")
+            except Exception as e:
+                print(f"  [!] Could not export {sf.name}: {str(e)[:150]}")
+
     add_history(kind, base, source or vpath, lang_desc, info.duration, files + [vpath])
 
     # ---- Done

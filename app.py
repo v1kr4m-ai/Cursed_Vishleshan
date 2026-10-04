@@ -11,6 +11,7 @@ picker, settings persistence). Job dispatch (Start) is a stub until Stage 3.
 import contextlib
 import datetime
 import hashlib
+import re
 import sys
 from pathlib import Path
 
@@ -321,6 +322,7 @@ class Api:
             "speakSave": bool(saved.get("speak_save", False)),
             "subtitles": saved.get("subtitles", "srt"),
             "chapters": bool(saved.get("chapters", False)),
+            "export": saved.get("export", "none"),
             "wordTiming": bool(saved.get("word_timing", False)),
             "speakerChoices": [n for n, _ in vs.SPEAKER_CHOICES],
             "speakers": next((n for n, v in vs.SPEAKER_CHOICES if v == saved.get("speakers", "off")), "Off"),
@@ -343,6 +345,7 @@ class Api:
             "speak_save": bool(data.get("speakSave", False)),
             "speakers": dict(vs.SPEAKER_CHOICES).get(data.get("speakers"), "off"),
             "chapters": bool(data.get("chapters", False)),
+            "export": data.get("export") if data.get("export") in ("none", "docx", "pdf", "both") else "none",
             "word_timing": bool(data.get("wordTiming", False)),
             "subtitles": data.get("subtitles", "srt") if data.get("subtitles") in ("none", "srt", "vtt", "both") else "srt",
         })
@@ -759,6 +762,20 @@ class Api:
             if r.returncode != 0 or not out.exists():
                 return ""
         return _MediaServer.url_for(out)
+
+    def export_file(self, path, fmt):
+        """Export a summary .md from History as Word or PDF next to it; returns {ok, path|message}."""
+        import exporter
+        p = Path(path)
+        ch = p.with_name(re.sub(r"_summary(_[^_]+)?$", "", p.stem) + "_chapters.md")
+        try:
+            out = exporter.export_summary(p, fmt, ch if ch.exists() else None)
+        except Exception as e:
+            return {"ok": False, "message": str(e)[:150]}
+        if not out:
+            return {"ok": False, "message": "Nothing was exported."}
+        vs.open_path(out[0], select=True)
+        return {"ok": True, "path": str(out[0]), "name": out[0].name}
 
     def read_history_file(self, path):
         if not str(path).lower().endswith((".txt", ".md")):

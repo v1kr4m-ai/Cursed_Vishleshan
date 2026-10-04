@@ -54,6 +54,10 @@
             <label class="checkrow"><input type="checkbox" id="subfolders"> Include subfolders</label>
             <label class="checkrow" title="Also write chapters (with timestamps) and key points - uses the summary AI, so it adds time"><input type="checkbox" id="chaptersChk"> Chapters &amp; key points</label>
             <label class="checkrow" title="Word-by-word timing: writes a .csv and cuts subtitles at natural pauses (a little slower)"><input type="checkbox" id="wordsChk"> Word timing</label>
+            <label class="checkrow" title="Also save each summary as a Word and/or PDF document next to it">Export
+              <select id="exportSelect" class="select" style="width:auto;padding:5px 10px;">
+                <option value="none">none</option><option value="docx">Word</option>
+                <option value="pdf">PDF</option><option value="both">Word + PDF</option></select></label>
             <label class="checkrow" title="Subtitle files made next to the transcript">Subtitles
               <select id="subsSelect" class="select" style="width:auto;padding:5px 10px;">
                 <option value="srt">.srt</option><option value="vtt">.vtt</option>
@@ -195,6 +199,8 @@
         <div class="rowflex" style="margin-top:12px;">
           <button class="startbtn small" id="historyOpenBtn">Open file</button>
           <button class="ghostbtn" id="historyFolderBtn">Show in folder</button>
+          <button class="ghostbtn" id="historyWordBtn" style="display:none;">Export Word</button>
+          <button class="ghostbtn" id="historyPdfBtn" style="display:none;">Export PDF</button>
           <button class="ghostbtn danger" id="historyRemoveBtn">Remove</button>
         </div>
       </div>
