@@ -11,7 +11,7 @@
 faster-whisper==1.2.1
 sounddevice==0.5.5
 PyAudioWPatch==0.2.12.8
-yt-dlp==2026.2.21
+yt-dlp==2026.8.19
 edge-tts==7.2.8
 
 # ---- UI (app.py) ----

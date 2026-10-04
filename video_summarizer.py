@@ -1573,6 +1573,14 @@ def already_done(f: Path) -> bool:
     return (f.parent / f"{f.stem}_transcript.txt").exists()
 
 
+class _YtLog:
+    """Send yt-dlp errors to the job log (print) instead of the hidden stderr."""
+    def debug(self, m): pass
+    def info(self, m): pass
+    def warning(self, m): pass
+    def error(self, m): print(f"  [!] {m}")
+
+
 def download_url(url: str):
     """Download a video (or a whole playlist) with yt-dlp. Returns [(path, title, page_url)]."""
     try:
@@ -1603,7 +1611,8 @@ def download_url(url: str):
 
     opts = {"format": fmt_sel, "outtmpl": str(out / "%(title).80s [%(id)s].%(ext)s"),
             "windowsfilenames": True, "noplaylist": True, "ignoreerrors": True,
-            "quiet": True, "no_warnings": True, "noprogress": True, "progress_hooks": [hook]}
+            "quiet": True, "no_warnings": True, "noprogress": True, "progress_hooks": [hook],
+            "logger": _YtLog()}
     if not DOWNLOAD_AUDIO_ONLY and shutil.which("ffmpeg"):
         opts["merge_output_format"] = "mp4"
 
@@ -1631,6 +1640,9 @@ def download_url(url: str):
                                     e.get("webpage_url") or url))
     except Exception as e:
         print(f"\n[!] Download failed: {e}")
+    if not results:
+        print("[!] Nothing was downloaded - see the error above. If YouTube refuses the download, "
+              "update the downloader:  pip install -U yt-dlp")
     return results
 
 
