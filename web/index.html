@@ -195,10 +195,18 @@
           <video id="historyMedia" controls preload="metadata"></video>
           <div class="muted small">Click a timestamped line to play from there.</div>
         </div>
+        <div id="historySpeakerPanel" class="speakerpanel" style="display:none;"></div>
         <div class="historytext" id="historyText"></div>
+        <textarea id="historyEdit" class="historyedit" style="display:none;" spellcheck="false"></textarea>
         <div class="rowflex" style="margin-top:12px;">
           <button class="startbtn small" id="historyOpenBtn">Open file</button>
           <button class="ghostbtn" id="historyFolderBtn">Show in folder</button>
+          <button class="ghostbtn" id="historyEditBtn" style="display:none;">Edit</button>
+          <button class="startbtn small" id="historySaveBtn" style="display:none;">Save edit</button>
+          <button class="ghostbtn" id="historyCancelBtn" style="display:none;">Cancel</button>
+          <button class="ghostbtn" id="historyRevertBtn" style="display:none;" title="Put back the file as it was before your first edit">Revert</button>
+          <button class="ghostbtn" id="historySpeakersBtn" style="display:none;">Rename speakers</button>
+          <button class="ghostbtn" id="historyRegenBtn" style="display:none;" title="Rebuild subtitles, translations, summaries, chapters and exports from this edited transcript">Rebuild outputs</button>
           <button class="ghostbtn" id="historyWordBtn" style="display:none;">Export Word</button>
           <button class="ghostbtn" id="historyPdfBtn" style="display:none;">Export PDF</button>
           <button class="ghostbtn danger" id="historyRemoveBtn">Remove</button>

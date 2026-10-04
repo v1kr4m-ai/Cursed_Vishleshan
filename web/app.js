@@ -834,8 +834,87 @@ async function showHistoryFile() {
   renderHistoryText(text);
   const isSummary = !!f && /_summary[^\\/]*\.md$/i.test(f.name);
   document.getElementById("historyWordBtn").style.display = isSummary ? "" : "none";
+  updateEditButtons(f, text);
   document.getElementById("historyPdfBtn").style.display = isSummary ? "" : "none";
 }
+
+// ---- editing: Edit / Save / Cancel / Revert, Rename speakers, Rebuild outputs
+let editing = false;
+const $h = (id) => document.getElementById(id);
+
+function currentHistoryFile() {
+  const sel = $h("historyFileSelect");
+  return historySelected && (historySelected.files.find((x) => x.name === sel.value) || historySelected.files[0]);
+}
+
+function setEditing(on) {
+  editing = on;
+  $h("historyEdit").style.display = on ? "" : "none";
+  $h("historyText").style.display = on ? "none" : "";
+  $h("historySaveBtn").style.display = on ? "" : "none";
+  $h("historyCancelBtn").style.display = on ? "" : "none";
+  $h("historyEditBtn").style.display = on ? "none" : ($h("historyEditBtn").dataset.can === "1" ? "" : "none");
+}
+
+function updateEditButtons(f, text) {
+  const textual = !!f && /\.(txt|md)$/i.test(f.name) && !!historySelected.files.length;
+  const main = !!f && /_transcript\.txt$/i.test(f.name);
+  $h("historyEditBtn").dataset.can = textual ? "1" : "0";
+  $h("historyRevertBtn").style.display = textual && f.orig ? "" : "none";
+  $h("historySpeakersBtn").style.display = textual && /Speaker \d+/.test(text || "") ? "" : "none";
+  $h("historyRegenBtn").style.display = main ? "" : "none";
+  $h("historySpeakerPanel").style.display = "none";
+  setEditing(false);
+}
+
+$h("historyEditBtn").addEventListener("click", async () => {
+  const f = currentHistoryFile();
+  if (!f) return;
+  $h("historyEdit").value = await callApi("read_history_file", f.path);
+  setEditing(true);
+  $h("historyEdit").focus();
+});
+$h("historyCancelBtn").addEventListener("click", () => setEditing(false));
+$h("historySaveBtn").addEventListener("click", async () => {
+  const f = currentHistoryFile();
+  const r = await callApi("save_history_text", f.path, $h("historyEdit").value);
+  if (!r || !r.ok) { toast((r && r.message) || "Could not save"); return; }
+  f.orig = true;
+  toast("Saved. Use \"Rebuild outputs\" to refresh the summary and translations from it.");
+  await showHistoryFile();
+});
+$h("historyRevertBtn").addEventListener("click", async () => {
+  const f = currentHistoryFile();
+  if (!f || !confirm("Put back the original file as it was before your edits?")) return;
+  const r = await callApi("revert_history_text", f.path);
+  if (r && r.ok) { f.orig = false; toast("Original restored"); await showHistoryFile(); } else toast((r && r.message) || "Could not revert");
+});
+$h("historyRegenBtn").addEventListener("click", async () => {
+  const f = currentHistoryFile();
+  if (!f) return;
+  const r = await callApi("regenerate_transcript", f.path);
+  if (!r || !r.ok) { toast((r && r.message) || "Could not start"); return; }
+  showStartedJob(r, "regen");
+});
+$h("historySpeakersBtn").addEventListener("click", async () => {
+  const panel = $h("historySpeakerPanel");
+  if (panel.style.display !== "none") { panel.style.display = "none"; return; }
+  const f = currentHistoryFile();
+  const text = await callApi("read_history_file", f.path);
+  const names = [...new Set(text.match(/Speaker \d+/g) || [])].sort();
+  panel.innerHTML = names.map((n) => `<label>${n} <input type="text" data-from="${n}" placeholder="name"></label>`).join("") +
+    '<button class="startbtn small" data-a="apply">Apply to all files</button>';
+  panel.style.display = "";
+  panel.querySelector('[data-a="apply"]').addEventListener("click", async () => {
+    const mapping = {};
+    panel.querySelectorAll("input").forEach((i) => { if (i.value.trim()) mapping[i.dataset.from] = i.value.trim(); });
+    if (!Object.keys(mapping).length) return;
+    const r = await callApi("rename_speakers", f.path, mapping);
+    toast(r && r.ok ? `Renamed in ${r.changed} file(s)` : ((r && r.message) || "Could not rename"));
+    panel.style.display = "none";
+    await showHistoryFile();
+  });
+});
 
 for (const [id, fmt] of [["historyWordBtn", "docx"], ["historyPdfBtn", "pdf"]]) {
   document.getElementById(id).addEventListener("click", async (e) => {
@@ -951,7 +1030,7 @@ function wireStart() {
 }
 
 function showStartedJob(res, mode) {
-  const tab = openToolTab(res.live ? res.title : ({ file: "File", folder: "Folder", url: "Link", watch: "Watch" }[mode] || res.title), "mode:" + mode);
+  const tab = openToolTab(res.live ? res.title : ({ file: "File", folder: "Folder", url: "Link", watch: "Watch", regen: "Rebuild" }[mode] || res.title), "mode:" + mode);
   if (res.live) { addLivePanel(res, tab); return; }
   addJobPanel(tab, res.jobId, res.title);
 }

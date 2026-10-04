@@ -1879,6 +1879,159 @@ def add_history(kind, title, source, languages, duration, files, details=""):
     save_history(items)
 
 
+# ---------------------------------------------------------------- editing a finished transcript
+def parse_transcript_file(path):
+    """Read a *_transcript.txt back into its parts."""
+    text = Path(path).read_text(encoding="utf-8", errors="replace")
+    head, _, rest = text.partition("===== TIMESTAMPED =====")
+    stamped = rest.split("===== PLAIN TEXT =====")[0].strip()
+    hl = head.splitlines()
+    meta = hl[1] if len(hl) > 1 else ""
+    m = re.search(r"Languages spoken: (.*?)(?:\s+\|\s+|$)", meta)
+    d = re.search(r"Duration: (\d+):(\d\d):(\d\d)", meta)
+    return {
+        "video_name": hl[0].replace("Transcript of:", "").strip() if hl else Path(path).stem,
+        "lang_desc": m.group(1).strip() if m else "",
+        "duration": int(d.group(1)) * 3600 + int(d.group(2)) * 60 + int(d.group(3)) if d else 0,
+        "note": chr(10).join(x for x in hl[2:] if x.strip()),
+        "stamped": stamped,
+    }
+
+
+def history_entry_for(path):
+    """The history entry whose files include `path` (or None)."""
+    key = str(Path(path))
+    for e in load_history():
+        if key in e.get("files", []):
+            return e
+    return None
+
+
+def update_history_files(entry_time, entry_title, new_files):
+    items = load_history()
+    for e in items:
+        if e.get("time") == entry_time and e.get("title") == entry_title:
+            have = set(e.get("files", []))
+            e["files"] = e.get("files", []) + [str(f) for f in new_files if str(f) not in have]
+    save_history(items)
+
+
+def rename_speakers_in_files(files, mapping):
+    """Replace 'Speaker N' by a real name in every text-like file. Returns the files changed."""
+    pats = [(re.compile(r"\b" + re.escape(old) + r"\b"), new.strip()) for old, new in mapping.items()
+            if new.strip() and new.strip() != old]
+    changed = []
+    for f in files:
+        p = Path(f)
+        if p.suffix.lower() not in (".txt", ".md", ".srt", ".vtt", ".csv") or not p.exists():
+            continue
+        raw = p.read_text(encoding="utf-8-sig" if p.suffix.lower() == ".csv" else "utf-8", errors="replace")
+        text = raw
+        for pat, new in pats:
+            text = pat.sub(lambda _m, n=new: n, text)
+        if text != raw:
+            p.write_text(text, encoding="utf-8-sig" if p.suffix.lower() == ".csv" else "utf-8")
+            changed.append(p)
+    return changed
+
+
+def regenerate_outputs(path, cfg, online):
+    """After the user edited a transcript: rebuild everything made from it - the plain-text part, subtitles,
+    translations, summaries, chapters and Word/PDF exports - in the currently selected output languages."""
+    p = Path(path)
+    info = parse_transcript_file(p)
+    stamped = info["stamped"]
+    if not stamped:
+        print("[!] This file has no timestamped lines - nothing to rebuild from.")
+        return []
+    print(f"Rebuilding from the edited transcript: {p.name}")
+    out_dir = p.parent
+    base = p.stem[:-len("_transcript")] if p.stem.endswith("_transcript") else p.stem
+    lang_desc, duration, note = info["lang_desc"], info["duration"], info["note"] + chr(10) if info["note"] else ""
+    lang_line = f"Languages spoken: {lang_desc}"
+    write_transcript(p, info["video_name"], lang_line, duration, stamped, note)
+    files = [p]
+    subs = cfg.get("subtitles", "srt")
+    for f in write_subtitles(out_dir / f"{base}_subtitles", segs_from_stamped(stamped, duration), subs):
+        files.append(f)
+        print(f"Subtitles saved: {f}")
+
+    main_name = re.split(r"[,(]", lang_desc)[0].strip() or "English"
+    main_code = LANG_CODES.get(main_name)
+    targets, seen = [], set()
+    for o in cfg.get("outputs", []):
+        name, is_orig = (main_name, True) if o == "Original" else (o, bool(main_code) and LANG_CODES.get(o) == main_code)
+        if name not in seen:
+            seen.add(name)
+            targets.append((name, is_orig))
+    if not targets:
+        targets = [(main_name, True)]
+
+    for name, is_orig in targets:
+        if is_orig:
+            continue
+        text, by = translate_transcript(stamped, name, online)
+        if not text:
+            print(f"  [!] No translator available for {name}.")
+            continue
+        f = out_dir / f"{base}_transcript_{safe_name(name)}.txt"
+        write_transcript(f, info["video_name"], f"{lang_line}  |  Translated to {name} by {by}", duration, text, note)
+        files.append(f)
+        for sf in write_subtitles(out_dir / f"{base}_subtitles_{safe_name(name)}", segs_from_stamped(text, duration), subs):
+            files.append(sf)
+        print(f"Translation saved: {f}")
+
+    if cfg.get("chapters"):
+        ch_lang = targets[0][0]
+        print(f"Finding chapters and key points ({ch_lang})...")
+        md, by = make_chapters(stamped, duration, ch_lang, online)
+        if md:
+            f = out_dir / f"{base}_chapters.md"
+            f.write_text(f"# Chapters and key points: {info['video_name']}" + chr(10) + chr(10) + md + chr(10) + chr(10) +
+                         f"---{chr(10)}_{lang_line}. Made by: {by}_{chr(10)}", encoding="utf-8")
+            files.append(f)
+
+    summaries = []
+    workdir = Path(tempfile.mkdtemp(prefix="vidsum_"))
+    try:
+        (workdir / "transcript.txt").write_text(stamped, encoding="utf-8")
+        _notes_cache.clear()
+        for name, _ in targets:
+            print(f"Creating {name} summary...")
+            res = summarize(workdir, stamped, info["video_name"], [], 0, lang_desc, name, online)
+            if not res:
+                print(f"  [!] Could not create the {name} summary.")
+                continue
+            summary, by = res
+            suffix = "" if len(targets) == 1 else f"_{safe_name(name)}"
+            f = out_dir / f"{base}_summary{suffix}.md"
+            f.write_text(f"{summary}{chr(10)}{chr(10)}---{chr(10)}_{lang_line}. Rebuilt from an edited transcript. "
+                         f"Summary by: {by}_{chr(10)}", encoding="utf-8")
+            files.append(f)
+            summaries.append((name, f, summary))
+            print(f"  Saved: {f}")
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+    exp = cfg.get("export", "none")
+    if exp not in (None, "", "none") and summaries:
+        import exporter
+        ch_file = out_dir / f"{base}_chapters.md"
+        for k, (_, sf, _s) in enumerate(summaries):
+            try:
+                for ef in exporter.export_summary(sf, exp, ch_file if k == 0 else None):
+                    files.append(ef)
+                    print(f"Exported: {ef}")
+            except Exception as e:
+                print(f"  [!] Could not export {sf.name}: {str(e)[:150]}")
+
+    entry = history_entry_for(p)
+    if entry:
+        update_history_files(entry.get("time"), entry.get("title"), files)
+    print(chr(10) + "Done - everything was rebuilt from your edited transcript.")
+    return files
+
+
 # ---------------------------------------------------------------- sources
 
 

@@ -734,7 +734,7 @@ class Api:
                 "time": e.get("time"), "title": e.get("title", ""),
                 "when": when, "kind": vs.KIND_LABELS.get(e.get("kind"), e.get("kind", "")),
                 "languages": e.get("languages", ""), "length": vs.fmt(e.get("duration") or 0),
-                "files": [{"path": f, "name": Path(f).name} for f in shown(e)],
+                "files": [{"path": f, "name": Path(f).name, "orig": Path(f + ".original").exists()} for f in shown(e)],
                 "details": e.get("details", ""),
                 "media": _history_media(e),
                 "exists": any(Path(f).exists() for f in e.get("files", [])),
@@ -762,6 +762,49 @@ class Api:
             if r.returncode != 0 or not out.exists():
                 return ""
         return _MediaServer.url_for(out)
+
+    # ---------------------------------------------------------------- editing transcripts
+    @staticmethod
+    def _editable(path):
+        p = str(path)
+        return p.lower().endswith((".txt", ".md")) and vs.history_entry_for(p) is not None
+
+    def save_history_text(self, path, text):
+        """Save the user's edit of a transcript/summary. The first save keeps the untouched file as <name>.original."""
+        if not self._editable(path):
+            return {"ok": False, "message": "That file isn't part of the history."}
+        p = Path(path)
+        orig = Path(str(p) + ".original")
+        if not orig.exists():
+            shutil.copyfile(p, orig)
+        p.write_text(text, encoding="utf-8")
+        return {"ok": True}
+
+    def revert_history_text(self, path):
+        orig = Path(str(path) + ".original")
+        if not self._editable(path) or not orig.exists():
+            return {"ok": False, "message": "No original saved."}
+        shutil.copyfile(orig, path)
+        orig.unlink()
+        return {"ok": True}
+
+    def rename_speakers(self, path, mapping):
+        """{'Speaker 1': 'Alice', ...} applied to every text file of the entry (transcripts, subtitles, summaries...)."""
+        entry = vs.history_entry_for(path)
+        if not entry:
+            return {"ok": False, "message": "That file isn't part of the history."}
+        changed = vs.rename_speakers_in_files(entry.get("files", []), mapping)
+        return {"ok": True, "changed": len(changed)}
+
+    def regenerate_transcript(self, path):
+        """Rebuild subtitles, translations, summaries, chapters and exports from an edited transcript (queued job)."""
+        if not self._editable(path) or not str(path).lower().endswith("_transcript.txt"):
+            return {"ok": False, "message": "Pick the main transcript file (…_transcript.txt) first."}
+        s = vs.load_settings()
+        online = self._online()
+        vs.VOCAB = vs.load_vocab()
+        job_id = _run_job(vs.regenerate_outputs, Path(path), s, online)
+        return {"ok": True, "jobId": job_id, "title": f"Rebuild: {Path(path).name}"}
 
     def export_file(self, path, fmt):
         """Export a summary .md from History as Word or PDF next to it; returns {ok, path|message}."""
