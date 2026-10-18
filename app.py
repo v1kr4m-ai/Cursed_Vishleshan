@@ -578,11 +578,11 @@ class Api:
             f"*{e}" for e in (".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v", ".wmv", ".flv",
                               ".mpg", ".mpeg", ".3gp", ".mp3", ".wav", ".m4a", ".aac", ".ogg",
                               ".flac")) + ")", "All files (*.*)")
-        result = self._window.create_file_dialog(webview.OPEN_DIALOG, file_types=types)
+        result = self._window.create_file_dialog(webview.FileDialog.OPEN, file_types=types)
         return result[0] if result else None
 
     def pick_folder(self):
-        result = self._window.create_file_dialog(webview.FOLDER_DIALOG)
+        result = self._window.create_file_dialog(webview.FileDialog.FOLDER)
         return result[0] if result else None
 
     def start_job(self, payload):
