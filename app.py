@@ -14,6 +14,7 @@ import hashlib
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
 # Started with pythonw (no console window): stdout/stderr don't exist, which crashes libraries
@@ -890,12 +891,14 @@ class Api:
     def get_app_settings(self):
         s = vs.load_settings()
         return {"notify": bool(s.get("notify_done", True)), "tray": bool(s.get("tray_keep", True)),
+                "fallback": bool(s.get("model_fallback", True)),
                 "trayAvailable": _TRAY["icon"] is not None}
 
     def save_app_settings(self, data):
         s = vs.load_settings()
         s["notify_done"] = bool(data.get("notify", True))
         s["tray_keep"] = bool(data.get("tray", True))
+        s["model_fallback"] = bool(data.get("fallback", True))
         vs.save_settings(s)
         return True
 
@@ -925,9 +928,25 @@ class Api:
             "options": {k: s.get(k, v) for k, v in OFFLINE_DEFAULTS.items()},
             "claudeFound": bool(shutil.which("claude")),
             "ollamaModels": ollama, "ollamaErr": ollama_err, "ollamaPicked": s.get("ollama_model", ""),
+            "ollamaTags": {n: vs.model_tag(n) for n in ollama},
+            "lmstudioTags": {n: vs.model_tag(n) for n in lmstudio},
             "lmstudioModels": lmstudio, "lmstudioErr": lmstudio_err,
             "lmstudioPicked": s.get("lmstudio_model", ""),
         }
+
+    def test_llm(self, kind):
+        """Send a tiny prompt to the model picked for Ollama / LM Studio and report what happened."""
+        t0 = time.time()
+        try:
+            apply_offline_settings()
+            model = vs.ollama_model() if kind == "ollama" else vs.lmstudio_model()
+            if not model:
+                return {"ok": False, "message": "No model found - is the server running?"}
+            chat = vs.ollama_chat if kind == "ollama" else vs.lmstudio_chat
+            reply = chat(model, "You are a test.", "Reply with the single word OK.")
+            return {"ok": True, "model": model, "seconds": round(time.time() - t0, 1), "reply": (reply or "")[:40]}
+        except Exception as e:
+            return {"ok": False, "message": str(e)[:240]}
 
     def save_offline_options(self, data):
         s = vs.load_settings()

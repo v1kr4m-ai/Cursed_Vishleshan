@@ -202,8 +202,21 @@ _local_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 def http_json(url, payload=None, timeout=10):
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-    with _local_opener.open(req, timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8"))
+    try:
+        with _local_opener.open(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode("utf-8", "replace")
+            body = (json.loads(body).get("error") or body)
+            if isinstance(body, dict):
+                body = body.get("message", str(body))
+        except Exception:
+            pass
+        hint = {402: " (a cloud model needs an Ollama sign-in / plan - pick a local model)",
+                401: " (sign-in needed)", 404: " (model not found - is it still installed?)"}.get(e.code, "")
+        raise RuntimeError(f"HTTP {e.code}{hint}: {str(body)[:160] or e.reason}") from None
 
 
 def strip_thinking(text: str) -> str:
@@ -1508,12 +1521,45 @@ def list_ollama_models():
     return [m["name"] for m in tags.get("models", []) if "embed" not in m["name"].lower()]
 
 
+_PREFER = ("phi4", "qwen3", "qwen2.5", "gemma", "llama3", "mistral", "gpt-oss", "glm", "deepseek-r1")
+
+
+def model_tag(name):
+    """'cloud' (needs sign-in), 'base' (not chat-tuned), 'vision/other', or '' for an ordinary local chat model."""
+    n = name.lower()
+    if ":cloud" in n or n.endswith("-cloud"):
+        return "cloud"
+    if "-base" in n:
+        return "base"
+    if any(x in n for x in ("llava", "stable-diffusion", "-vl", "vision")):
+        return "vision/other"
+    return ""
+
+
+def suitable_models(names):
+    """Local chat-capable models, best known families first - what 'auto' picks from."""
+    good = [n for n in names if not model_tag(n)]
+    return sorted(good, key=lambda n: next((i for i, p in enumerate(_PREFER) if p in n.lower()), 99))
+
+
+def local_candidates(backend):
+    """Models to try for a backend: the one picked in Offline Settings first, then (when 'try another
+    model' is on) a couple of other suitable ones."""
+    s = load_settings()
+    if backend == "ollama":
+        names, picked = list_ollama_models(), s.get("ollama_model") or OLLAMA_MODEL
+    else:
+        names, picked = list_lmstudio_models(), s.get("lmstudio_model") or LMSTUDIO_MODEL
+    first = picked if picked in names else (suitable_models(names) or names or [None])[0]
+    out = [first] if first else []
+    if s.get("model_fallback", True):
+        out += [n for n in suitable_models(names) if n != first][:2]
+    return out
+
+
 def ollama_model():
-    picked = load_settings().get("ollama_model") or OLLAMA_MODEL
-    names = list_ollama_models()
-    if picked and picked in names:
-        return picked
-    return names[0] if names else None
+    c = local_candidates("ollama")
+    return c[0] if c else None
 
 
 def ollama_chat(model, system, user, images_b64=None):
@@ -1527,7 +1573,10 @@ def ollama_chat(model, system, user, images_b64=None):
         "options": {"num_ctx": OLLAMA_NUM_CTX, "temperature": 0.3},
     }
     r = http_json(OLLAMA_URL + "/api/chat", payload, timeout=LOCAL_TIMEOUT_SEC)
-    return strip_thinking(r["message"]["content"])
+    text = strip_thinking(r["message"]["content"])
+    if not text:
+        raise RuntimeError("the model returned an empty answer")
+    return text
 
 
 def ensure_lmstudio():
@@ -1557,11 +1606,8 @@ def list_lmstudio_models():
 
 
 def lmstudio_model():
-    picked = load_settings().get("lmstudio_model") or LMSTUDIO_MODEL
-    ids = list_lmstudio_models()
-    if picked and picked in ids:
-        return picked
-    return ids[0] if ids else None
+    c = local_candidates("lmstudio")
+    return c[0] if c else None
 
 
 def lmstudio_chat(model, system, user, images_b64=None):
@@ -1610,12 +1656,14 @@ def local_backend(backend):
 _notes_cache = {}
 
 
-def summarize_local(backend, transcript, video_name, frames, interval, lang_desc, out_lang):
+def summarize_local(backend, transcript, video_name, frames, interval, lang_desc, out_lang, model_override=None):
     tag = f"[{backend}]"
     lb = local_backend(backend)
     if not lb:
         return None
     label, model, chat = lb
+    if model_override:
+        model = model_override
     print(f"  {tag} Using model: {model}")
     system = "You are an expert at summarizing videos accurately and concisely. Never invent facts."
 
@@ -1672,7 +1720,18 @@ def summarize(workdir, transcript, video_name, frames, interval, lang_desc, out_
                 continue
             res = summarize_claude(workdir, video_name, frames, interval, lang_desc, out_lang)
         elif b in ("ollama", "lmstudio"):
-            res = summarize_local(b, transcript, video_name, frames, interval, lang_desc, out_lang)
+            res = None
+            try:
+                models = local_candidates(b)
+            except Exception as e:
+                print(f"  [{b}] Could not list models: {e}")
+                models = []
+            for k, m in enumerate(models):
+                if k:
+                    print(f"  [{b}] Trying another installed model: {m}")
+                res = summarize_local(b, transcript, video_name, frames, interval, lang_desc, out_lang, m)
+                if res:
+                    break
         else:
             continue
         if res:
@@ -1689,8 +1748,13 @@ def text_llms(online):
         elif b in ("ollama", "lmstudio"):
             lb = local_backend(b)
             if lb:
-                label, model, chat = lb
-                yield f"{label} ({model})", (lambda s, u, m=model, c=chat: c(m, s, u))
+                label, _, chat = lb
+                try:
+                    models = local_candidates(b)
+                except Exception:
+                    models = [lb[1]]
+                for model in models:
+                    yield f"{label} ({model})", (lambda s, u, m=model, c=chat: c(m, s, u))
 
 
 def translate_transcript(transcript, target, online):

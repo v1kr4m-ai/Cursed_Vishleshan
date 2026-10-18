@@ -504,10 +504,10 @@ const TAB_LOADERS = { cleanup: loadCleanupTab, offline: () => { loadOfflineTab()
 async function loadAppSettings() {
   const a = await callApi("get_app_settings");
   if (!a || typeof a.notify === "undefined") return;
-  const n = document.getElementById("notifyChk"), t = document.getElementById("trayChk");
-  n.checked = a.notify; t.checked = a.tray;
-  const save = () => callApi("save_app_settings", { notify: n.checked, tray: t.checked });
-  n.onchange = t.onchange = save;
+  const n = document.getElementById("notifyChk"), t = document.getElementById("trayChk"), fb = document.getElementById("fallbackChk");
+  n.checked = a.notify; t.checked = a.tray; fb.checked = a.fallback !== false;
+  const save = () => callApi("save_app_settings", { notify: n.checked, tray: t.checked, fallback: fb.checked });
+  n.onchange = t.onchange = fb.onchange = save;
   document.getElementById("trayNote").textContent = a.trayAvailable ? "" :
     "No tray icon: install the 'pystray' package (pip install pystray) to enable notifications and the tray.";
 }
@@ -766,6 +766,15 @@ async function loadOfflineTab() {
     .forEach((id) => { $(id).onchange = saveOffline; });
   $("ollamaRefresh").onclick = async () => { await saveOffline(); loadOfflineTab(); };
   $("lmstudioRefresh").onclick = async () => { await saveOffline(); loadOfflineTab(); };
+  for (const kind of ["ollama", "lmstudio"]) {
+    $(kind + "Test").onclick = async () => {
+      const st = $(kind + "Status"), btn = $(kind + "Test");
+      btn.disabled = true; st.textContent = "Testing the model...";
+      const r = await callApi("test_llm", kind);
+      btn.disabled = false;
+      st.textContent = r && r.ok ? `Works: ${r.model} answered "${r.reply}" in ${r.seconds}s` : `Failed: ${(r && r.message) || "no answer"}`;
+    };
+  }
 }
 
 function renderEngines() {
@@ -813,8 +822,10 @@ function saveOffline() {
 function fillOfflineSelect(kind, models, picked, err) {
   const sel = document.getElementById(kind + "Select");
   const AUTO = "(auto - first available)";
+  const tags = (offlineData && offlineData[kind + "Tags"]) || {};
+  const note = { cloud: " - cloud, needs sign-in", base: " - base model, not for chat", "vision/other": " - vision / special purpose" };
   sel.innerHTML = [AUTO, ...models].map((m) =>
-    `<option ${m === (picked || AUTO) ? "selected" : ""}>${m}</option>`).join("");
+    `<option value="${m}" ${m === (picked || AUTO) ? "selected" : ""}>${m}${note[tags[m]] || ""}</option>`).join("");
   sel.onchange = () => callApi("save_offline_model", kind, sel.value === AUTO ? "" : sel.value);
   document.getElementById(kind + "Status").textContent =
     err ? "Not reachable: " + err.slice(0, 90) : `${models.length} model(s) found.`;

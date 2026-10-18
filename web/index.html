@@ -166,7 +166,8 @@
         <input type="text" id="ollamaUrl" class="select">
         <label class="small muted">Model</label>
         <div class="rowflex"><select id="ollamaSelect" class="select" style="flex:1;"></select>
-          <button class="ghostbtn" id="ollamaRefresh">Refresh</button></div>
+          <button class="ghostbtn" id="ollamaRefresh">Refresh</button>
+          <button class="ghostbtn" id="ollamaTest" title="Send a tiny prompt to this model and show the result or the exact error">Test</button></div>
         <label class="small muted">Context window (tokens) - lower it if you run out of memory</label>
         <input type="number" id="ollamaCtx" class="select" min="2048" step="1024">
         <p class="muted small" id="ollamaStatus"></p>
@@ -178,7 +179,8 @@
         <input type="text" id="lmstudioUrl" class="select">
         <label class="small muted">Model</label>
         <div class="rowflex"><select id="lmstudioSelect" class="select" style="flex:1;"></select>
-          <button class="ghostbtn" id="lmstudioRefresh">Refresh</button></div>
+          <button class="ghostbtn" id="lmstudioRefresh">Refresh</button>
+          <button class="ghostbtn" id="lmstudioTest" title="Send a tiny prompt to this model and show the result or the exact error">Test</button></div>
         <p class="muted small" id="lmstudioStatus"></p>
         <p class="muted small">LM Studio: Developer tab &rarr; Start server.</p>
       </div>
@@ -207,6 +209,7 @@
       <h2>App behaviour</h2>
       <label class="checkrow"><input type="checkbox" id="notifyChk"> Notify me when a job finishes while the window is in the background</label>
       <label class="checkrow"><input type="checkbox" id="trayChk"> Closing the window while jobs are running keeps them going in the tray icon</label>
+      <label class="checkrow"><input type="checkbox" id="fallbackChk"> If the chosen model fails or answers nothing, try another installed local model</label>
       <p class="muted small" id="trayNote"></p>
     </div>
   </main>
