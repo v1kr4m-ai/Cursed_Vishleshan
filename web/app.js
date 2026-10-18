@@ -863,6 +863,21 @@ async function showHistoryFile() {
   const sel = document.getElementById("historyFileSelect");
   const f = historySelected.files.find((x) => x.name === sel.value) || historySelected.files[0];
   const text = (f ? await callApi("read_history_file", f.path) : "") || historySelected.details || "";
+  unsureWords = null;
+  const unsureEl = document.getElementById("historyUnsure");
+  unsureEl.style.display = "none";
+  if (f && /_transcript\.txt$/i.test(f.name) && historySelected.media) {
+    unsureWords = await callApi("get_uncertain_words", f.path);
+    if (Array.isArray(unsureWords)) {
+      unsureEl.style.display = "";
+      unsureEl.textContent = unsureWords.length
+        ? `${unsureWords.length} uncertain word${unsureWords.length > 1 ? "s" : ""} underlined - click one to hear it, or use "Re-transcribe part" on a bad stretch.`
+        : "No uncertain words - the model was confident throughout.";
+    } else {
+      unsureEl.style.display = "";
+      unsureEl.textContent = 'Tip: switch on "Word timing" on Home to see which words the model was unsure about.';
+    }
+  }
   renderHistoryText(text);
   const isSummary = !!f && /_summary[^\\/]*\.md$/i.test(f.name);
   document.getElementById("historyWordBtn").style.display = isSummary ? "" : "none";
@@ -895,6 +910,8 @@ function updateEditButtons(f, text) {
   $h("historyRevertBtn").style.display = textual && f.orig ? "" : "none";
   $h("historySpeakersBtn").style.display = textual && /Speaker \d+/.test(text || "") ? "" : "none";
   $h("historyRegenBtn").style.display = main ? "" : "none";
+  $h("historyRetrBtn").style.display = main && historySelected.media ? "" : "none";
+  $h("historyRetrPanel").style.display = "none";
   $h("historySpeakerPanel").style.display = "none";
   setEditing(false);
 }
@@ -921,6 +938,36 @@ $h("historyRevertBtn").addEventListener("click", async () => {
   const r = await callApi("revert_history_text", f.path);
   if (r && r.ok) { f.orig = false; toast("Original restored"); await showHistoryFile(); } else toast((r && r.message) || "Could not revert");
 });
+// ---- re-transcribe a part with another model
+$h("historyRetrBtn").addEventListener("click", async () => {
+  const panel = $h("historyRetrPanel");
+  if (panel.style.display !== "none") { panel.style.display = "none"; return; }
+  const models = (await callApi("get_models")).filter((m) => m.downloaded);
+  if (!models.length) { toast("Download a model on Home first."); return; }
+  $h("retrModel").innerHTML = models.map((m) => `<option>${m.name}</option>`).join("");
+  const big = models.map((m) => m.name).reverse().find((n) => /large|medium/.test(n));
+  if (big) $h("retrModel").value = big;
+  const sel = document.querySelector("#historyText .tline.picked") || document.querySelector("#historyText .tline.playing");
+  const lines = [...document.querySelectorAll("#historyText .tline")];
+  const idx = sel ? lines.indexOf(sel) : 0;
+  const hms = (s) => [Math.floor(s / 3600), Math.floor(s / 60) % 60, s % 60].map((x) => String(x).padStart(2, "0")).join(":");
+  const t0 = lines[idx] ? +lines[idx].dataset.t : 0;
+  const t1 = lines[idx + 1] ? +lines[idx + 1].dataset.t : t0 + 30;
+  $h("retrFrom").value = hms(t0); $h("retrTo").value = hms(t1);
+  panel.style.display = "";
+});
+$h("retrRun").addEventListener("click", async () => {
+  const f = currentHistoryFile();
+  const r = await callApi("retranscribe_part", f.path, $h("retrFrom").value, $h("retrTo").value, $h("retrModel").value);
+  if (!r || !r.ok) { toast((r && r.message) || "Could not start"); return; }
+  $h("historyRetrPanel").style.display = "none";
+  showStartedJob(r, "regen");
+  const wait = setInterval(async () => {   // refresh the shown transcript when the job is done
+    const j = await callApi("get_job_log", r.jobId, 1e9);
+    if (j && j.done) { clearInterval(wait); if (historySelected) { const cur = currentHistoryFile(); if (cur && cur.path === f.path) { cur.orig = true; showHistoryFile(); } } }
+  }, 1500);
+});
+
 $h("historyRegenBtn").addEventListener("click", async () => {
   const f = currentHistoryFile();
   if (!f) return;
@@ -962,19 +1009,47 @@ for (const [id, fmt] of [["historyWordBtn", "docx"], ["historyPdfBtn", "pdf"]]) 
 }
 
 // Timestamped transcript lines ("[00:01:23] ...") become clickable: they play the recording from there.
+let unsureWords = null;   // low-confidence words of the shown transcript (null = no word-timing file)
+const normWord = (w) => w.toLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+
 function renderHistoryText(text) {
   const box = document.getElementById("historyText");
   box.textContent = "";
   const media = document.getElementById("historyMedia");
-  text.split(String.fromCharCode(10)).forEach((line) => {
+  const lines = text.split(String.fromCharCode(10));
+  const lineT = lines.map((l) => { const m = /^[\s#*-]*\[?(\d\d):(\d\d):(\d\d)\]?/.exec(l); return m ? +m[1] * 3600 + +m[2] * 60 + +m[3] : null; });
+  lines.forEach((line, li) => {
     const div = document.createElement("div");
     const m = /^[\s#*-]*\[?(\d\d):(\d\d):(\d\d)\]?/.exec(line);
     div.textContent = line || " ";
+    if (m && unsureWords && unsureWords.length) {
+      // words of this line the model was unsure about -> underlined, click plays right there
+      const next = lineT.slice(li + 1).find((t) => t !== null);
+      const mine = unsureWords.filter((w) => w.start >= lineT[li] && (next === undefined || w.start < next));
+      if (mine.length) {
+        div.textContent = "";
+        let qi = 0;
+        line.split(/(\s+)/).forEach((tok) => {
+          const hit = qi < mine.length && normWord(tok) && normWord(tok) === normWord(mine[qi].word) ? mine[qi++] : null;
+          if (!hit) { div.appendChild(document.createTextNode(tok)); return; }
+          const sp = document.createElement("span");
+          sp.className = "unsure"; sp.textContent = tok; sp.title = `Unsure (${Math.round(hit.conf * 100)}%) - click to hear`;
+          sp.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            await ensureHistoryMedia();
+            media.currentTime = Math.max(0, hit.start - 0.4); media.play().catch(() => {});
+          });
+          div.appendChild(sp);
+        });
+      }
+    }
     if (m && historySelected && historySelected.media) {
       div.className = "tline";
       div.dataset.t = String(+m[1] * 3600 + +m[2] * 60 + +m[3]);
       div.title = "Play from here";
       div.addEventListener("click", async () => {
+        box.querySelectorAll(".tline.picked").forEach((x) => x.classList.remove("picked"));
+        div.classList.add("picked");
         await ensureHistoryMedia();
         media.currentTime = +div.dataset.t;
         media.play().catch(() => {});

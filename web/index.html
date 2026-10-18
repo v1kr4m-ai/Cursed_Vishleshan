@@ -227,11 +227,19 @@
           <div class="muted small">Click a timestamped line to play from there.</div>
         </div>
         <div id="historySpeakerPanel" class="speakerpanel" style="display:none;"></div>
+        <div id="historyRetrPanel" class="speakerpanel" style="display:none;">
+          <label>From <input type="text" id="retrFrom" placeholder="0:00"></label>
+          <label>To <input type="text" id="retrTo" placeholder="0:30"></label>
+          <label>Model <select id="retrModel"></select></label>
+          <button class="startbtn small" id="retrRun">Re-transcribe</button>
+        </div>
+        <div id="historyUnsure" class="muted small" style="display:none;margin-bottom:6px;"></div>
         <div class="historytext" id="historyText"></div>
         <textarea id="historyEdit" class="historyedit" style="display:none;" spellcheck="false"></textarea>
         <div class="rowflex" style="margin-top:12px;">
           <button class="startbtn small" id="historyOpenBtn">Open file</button>
           <button class="ghostbtn" id="historyFolderBtn">Show in folder</button>
+          <button class="ghostbtn" id="historyRetrBtn" style="display:none;" title="Redo just a part of the recording with another (usually bigger) model">Re-transcribe part</button>
           <button class="ghostbtn" id="historyEditBtn" style="display:none;">Edit</button>
           <button class="startbtn small" id="historySaveBtn" style="display:none;">Save edit</button>
           <button class="ghostbtn" id="historyCancelBtn" style="display:none;">Cancel</button>

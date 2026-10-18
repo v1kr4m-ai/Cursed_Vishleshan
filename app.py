@@ -1041,6 +1041,29 @@ class Api:
         changed = vs.rename_speakers_in_files(entry.get("files", []), mapping)
         return {"ok": True, "changed": len(changed)}
 
+    def get_uncertain_words(self, path):
+        """Low-confidence words for a transcript (None when the entry has no word-timing file)."""
+        if not self._editable(path):
+            return None
+        return vs.low_confidence_words(path)
+
+    def retranscribe_part(self, path, start, end, model_name):
+        """Queue a second pass over [start, end] of the recording with another model."""
+        entry = vs.history_entry_for(path) if self._editable(path) else None
+        media = (_history_media(entry) or {}).get("path") if entry else None
+        if not media:
+            return {"ok": False, "message": "The original recording isn't available."}
+        try:
+            a, b = _parse_time(start), _parse_time(end)
+        except ValueError as e:
+            return {"ok": False, "message": str(e)}
+        if a is None or b is None or b <= a:
+            return {"ok": False, "message": "Give a start and an end time (end after start)."}
+        job_id = _run_job(_with_model, model_name, lambda m: vs.retranscribe_range(Path(path), media, a, b, m))
+        JOBS[job_id]["title"] = f"Re-transcribe {vs.fmt(a)}-{vs.fmt(b)}: {Path(path).name}"
+        _qadd(job_id, "retranscribe_part", [str(path), start, end, model_name], JOBS[job_id]["title"])
+        return {"ok": True, "jobId": job_id, "title": JOBS[job_id]["title"]}
+
     def regenerate_transcript(self, path):
         """Rebuild subtitles, translations, summaries, chapters and exports from an edited transcript (queued job)."""
         if not self._editable(path) or not str(path).lower().endswith("_transcript.txt"):

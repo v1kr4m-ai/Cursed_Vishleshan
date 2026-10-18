@@ -1969,6 +1969,60 @@ def parse_transcript_file(path):
     }
 
 
+def low_confidence_words(transcript_path, threshold=0.5):
+    """Words Whisper was unsure about, from the <name>_words.csv written by 'Word timing'.
+    Returns None when there is no such file, else [{'start', 'word', 'conf'}]."""
+    p = Path(transcript_path)
+    stem = p.stem[:-len("_transcript")] if p.stem.endswith("_transcript") else p.stem
+    csv_file = p.with_name(f"{stem}_words.csv")
+    if not csv_file.exists():
+        return None
+    out = []
+    for line in csv_file.read_text(encoding="utf-8-sig", errors="replace").splitlines()[1:]:
+        m = re.match(r'^([\d.]+),([\d.]+),"(.*)",([\d.]+),', line)
+        if m and float(m.group(4)) < threshold:
+            out.append({"start": float(m.group(1)), "word": m.group(3).replace('""', '"'), "conf": float(m.group(4))})
+    return out
+
+
+def retranscribe_range(path, media, start, end, model, language_name=None):
+    """Re-do just [start, end] seconds of a recording with another (usually bigger) model and put the new
+    lines into the transcript in place of the old ones. The untouched file is kept as <name>.original."""
+    p = Path(path)
+    info = parse_transcript_file(p)
+    code = LANG_CODES.get(language_name or (re.split(r"[,(]", info["lang_desc"])[0].strip() or ""))
+    print(f"Re-transcribing {fmt(start)} - {fmt(end)} of {Path(media).name} ({code or 'auto-detect'})...")
+    tmp = Path(tempfile.mkdtemp(prefix="vidsum_retr_"))
+    try:
+        audio, offset = prepare_audio(media, (start, end), "off", tmp, False, 1.0)
+        new_lines = transcribe(model, audio, code, offset=offset)[0]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if not new_lines:
+        print("[!] The model heard nothing in that part - the transcript was not changed.")
+        return
+    keep, replaced = [], 0
+    for line in info["stamped"].splitlines():
+        m = re.match(r"^\[(\d\d):(\d\d):(\d\d)\]", line)
+        t = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3)) if m else None
+        if t is not None and start <= t < end:
+            replaced += 1
+        else:
+            keep.append((t if t is not None else -1, line))
+    for line in new_lines:
+        m = re.match(r"^\[(\d\d):(\d\d):(\d\d)\]", line)
+        keep.append((int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3)), line))
+    keep.sort(key=lambda x: x[0])
+    orig = Path(str(p) + ".original")
+    if not orig.exists():
+        shutil.copyfile(p, orig)
+    note = info["note"] + chr(10) if info["note"] else ""
+    note += f"Part {fmt(start)}-{fmt(end)} re-transcribed with a second pass (speaker labels not applied to it)." + chr(10)
+    write_transcript(p, info["video_name"], f"Languages spoken: {info['lang_desc']}", info["duration"],
+                     chr(10).join(line for _, line in keep), note)
+    print(f"Replaced {replaced} line(s) with {len(new_lines)} new one(s). Use 'Rebuild outputs' to refresh summaries.")
+
+
 def history_entry_for(path):
     """The history entry whose files include `path` (or None)."""
     key = str(Path(path))

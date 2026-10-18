@@ -484,3 +484,9 @@ html, body {
 .resumebar { display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap;
   margin: 0 0 16px; padding: 12px 18px; border-radius: 16px; background: #fff6dd; border: 1px solid #f5d98a; }
 .resumebar .muted { display: block; margin-top: 2px; }
+
+/* Round 14: uncertain words + re-transcribe part */
+.historytext .unsure { background: #fff1b8; border-bottom: 2px solid #f0a21a; border-radius: 3px; cursor: pointer; }
+.historytext .unsure:hover { background: #ffe07a; }
+#historyRetrPanel input { width: 90px; }
+.historytext .tline.picked { outline: 1px dashed #f0a21a; }
