@@ -267,9 +267,8 @@ def _job_finished_notice(job_id, outcome):
         _notify("Done", f"{title} - all jobs finished.")
 
 
-class JobCancelled(BaseException):
-    """Raised inside a running job when the user presses Stop. BaseException on purpose: the
-    'except Exception' blocks all over the processing code must not swallow it."""
+JobCancelled = vs.JobCancelled     # defined in video_summarizer so its HTTP helper can raise it too
+StepSkipped = vs.StepSkipped
 
 
 _CURRENT = {"job": None, "tid": None}  # the job running right now and its thread
@@ -291,6 +290,8 @@ def _queue_worker():
             try:
                 with contextlib.redirect_stdout(_JobBuffer(job_id)):
                     target_fn(*args, **kwargs)
+            except StepSkipped:
+                outcome = "ok"        # a skip that arrived just as its step ended - the job is over anyway
             except JobCancelled:
                 outcome = "stopped"
                 JOBS[job_id]["lines"].append(chr(10) + "Stopped." + chr(10))
@@ -302,8 +303,8 @@ def _queue_worker():
                 JOBS[job_id]["done"] = True
             _qremove(job_id)
             _job_finished_notice(job_id, outcome)
-        except JobCancelled:
-            pass   # Stop arrived just as the job was finishing
+        except (JobCancelled, StepSkipped):
+            pass   # Stop / Skip arrived just as the job was finishing
 
 
 def _queue_position(job_id):
@@ -588,12 +589,14 @@ class Api:
         res = self._start_job(payload)
         if isinstance(res, dict) and res.get("jobId") in JOBS:
             JOBS[res["jobId"]]["title"] = res.get("title", "")
+            JOBS[res["jobId"]]["cfg"] = self._last_cfg
             if payload.get("mode") in ("file", "folder", "url"):
                 _qadd(res["jobId"], "start_job", [dict(payload)], res.get("title", ""))
         return res
 
     def _start_job(self, payload):
         s = vs.load_settings()
+        self._last_cfg = s
         clip = payload.get("clip") or {}
         if (clip.get("start") or clip.get("end")) and payload.get("mode", s.get("mode", "file")) in ("file", "url"):
             try:
@@ -820,8 +823,12 @@ class Api:
         if not j:
             return {"lines": [], "done": True}
         lines = j["lines"][offset:]
+        cfg = j.get("cfg")
+        running = _CURRENT["job"] == job_id and not j["done"]
         return {"lines": lines, "done": j["done"], "nextOffset": offset + len(lines),
-                "queued": _queue_position(job_id), "cancelled": bool(j.get("cancelled"))}
+                "queued": _queue_position(job_id), "cancelled": bool(j.get("cancelled")),
+                "step": vs.STEP["name"] if running else None,
+                "canSkip": cfg is not None, "skips": list((cfg or {}).get("skip") or [])}
 
     def _online(self):
         s = vs.load_settings()
@@ -859,6 +866,30 @@ class Api:
         _qadd(job_id, "start_cleanup_job", [str(src_path), str(out_dir), noise_mode, speed, bool(video)],
               JOBS[job_id]["title"])
         return job_id
+
+    def skip_step(self, job_id):
+        """Skip the step a running job is in right now (translation, summary, chapters, export, speaker labels)."""
+        import ctypes
+        tid, name = _CURRENT["tid"], vs.STEP["name"]
+        if _CURRENT["job"] != job_id or tid is None or not name:
+            return {"ok": False, "message": "There is no skippable step running right now."}
+        ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(tid), ctypes.py_object(StepSkipped))
+        for p in list(_PROCS):
+            try:
+                exe = Path(str(p.args[0] if isinstance(p.args, (list, tuple)) else p.args)).stem.lower()
+                if exe in ("claude", "ffmpeg") and p.poll() is None:
+                    p.terminate()
+            except Exception:
+                pass
+        return {"ok": True, "step": name}
+
+    def set_job_skips(self, job_id, skips):
+        """Steps to leave out of a queued (or running) job: speakers, translation, chapters, summary, export."""
+        cfg = (JOBS.get(job_id) or {}).get("cfg")
+        if cfg is None:
+            return False
+        cfg["skip"] = [k for k in skips if k in ("speakers", "translation", "chapters", "summary", "export")]
+        return True
 
     def get_interrupted(self):
         return [i.get("title", "") for i in INTERRUPTED]

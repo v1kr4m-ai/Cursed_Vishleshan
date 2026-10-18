@@ -199,24 +199,88 @@ def internet_ok() -> bool:
 _local_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
+class JobCancelled(BaseException):
+    """Raised inside a running job when the user presses Stop. BaseException on purpose: the
+    'except Exception' blocks all over the processing code must not swallow it."""
+
+
+class StepSkipped(BaseException):
+    """Raised inside a running step when the user presses 'Skip step'; the step's `with` block ends it."""
+
+
+STEP = {"name": None, "key": None}     # the step the running job is in right now (for the Skip button)
+
+
+def skipped(cfg, key):
+    """True when the user chose to skip this kind of step for this job (before or while it runs)."""
+    return key in (cfg.get("skip") or ())
+
+
+class step:
+    """with step(cfg, 'summary', 'English summary'): ...  - marks what the job is doing; if the user presses
+    'Skip step' meanwhile, the rest of the block is abandoned and the job carries on with the next step."""
+
+    def __init__(self, cfg, key, name):
+        self.key, self.name = key, name
+
+    def __enter__(self):
+        STEP["name"], STEP["key"] = self.name, self.key
+        return self
+
+    def __exit__(self, et, ev, tb):
+        STEP["name"] = STEP["key"] = None
+        if et is not None and issubclass(et, StepSkipped):
+            print(f"  Skipped: {self.name}")
+            return True
+        return False
+
+
 def http_json(url, payload=None, timeout=10):
+    """JSON over HTTP to a local server (Ollama / LM Studio). The call runs in a helper thread while this one
+    waits in short slices, so a Stop / Skip from the user takes effect within a fraction of a second and the
+    connection is closed (which also makes the server stop generating)."""
+    import http.client
+    import urllib.parse
+    u = urllib.parse.urlparse(url)
+    https = u.scheme == "https"
+    conn = (http.client.HTTPSConnection if https else http.client.HTTPConnection)(
+        u.hostname, u.port or (443 if https else 80), timeout=timeout)
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-    try:
-        with _local_opener.open(req, timeout=timeout) as r:
-            return json.loads(r.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        body = ""
+    box = {}
+
+    def work():
         try:
-            body = e.read().decode("utf-8", "replace")
-            body = (json.loads(body).get("error") or body)
+            conn.request("POST" if data is not None else "GET", u.path + ("?" + u.query if u.query else ""),
+                         body=data, headers={"Content-Type": "application/json"})
+            r = conn.getresponse()
+            box["status"], box["reason"], box["raw"] = r.status, r.reason, r.read()
+        except Exception as e:
+            box["err"] = e
+    t = threading.Thread(target=work, daemon=True)
+    t.start()
+    try:
+        while t.is_alive():
+            t.join(0.25)
+    finally:
+        if t.is_alive():          # we were interrupted: drop the connection
+            try:
+                conn.close()
+            except Exception:
+                pass
+    if "err" in box:
+        raise box["err"]
+    if box.get("status", 200) >= 400:
+        body = box["raw"].decode("utf-8", "replace")
+        try:
+            body = json.loads(body).get("error") or body
             if isinstance(body, dict):
                 body = body.get("message", str(body))
         except Exception:
             pass
         hint = {402: " (a cloud model needs an Ollama sign-in / plan - pick a local model)",
-                401: " (sign-in needed)", 404: " (model not found - is it still installed?)"}.get(e.code, "")
-        raise RuntimeError(f"HTTP {e.code}{hint}: {str(body)[:160] or e.reason}") from None
+                401: " (sign-in needed)", 404: " (model not found - is it still installed?)"}.get(box["status"], "")
+        raise RuntimeError(f"HTTP {box['status']}{hint}: {str(body)[:160] or box['reason']}")
+    return json.loads(box["raw"].decode("utf-8"))
 
 
 def strip_thinking(text: str) -> str:
@@ -2356,8 +2420,11 @@ def _process(vpath, audio_src, offset, clip, cfg, model, online, kind, source, o
             print("This video mixes languages - each part will be transcribed in its own language.\n")
 
     # ---- Who speaks when (optional)
-    diar = [(a * _SPEED + offset, b * _SPEED + offset, s)
-            for a, b, s in diarize(audio_src, cfg.get("speakers", "off"), online)]
+    diar = []
+    if not skipped(cfg, "speakers") and cfg.get("speakers", "off") not in (None, "", "off"):
+        with step(cfg, "speakers", "Speaker labels"):
+            diar = [(a * _SPEED + offset, b * _SPEED + offset, s)
+                    for a, b, s in diarize(audio_src, cfg.get("speakers", "off"), online)]
 
     # ---- Original transcript
     raw_stamped, _, info, stamped, dropped, marked, raw_segs = transcribe(
@@ -2429,46 +2496,48 @@ def _process(vpath, audio_src, offset, clip, cfg, model, online, kind, source, o
 
     # ---- Translated transcripts (+ spoken audio)
     for name, is_orig in targets:
-        if is_orig or not body:
+        if is_orig or not body or skipped(cfg, "translation"):
             continue
-        text, by = translate_transcript(body, name, online)
-        if not text and name == "English":
-            text, by = whisper_translate_english(model, audio_src, cfg["language"], offset, noisy), "Whisper"
-        if not text:
-            print(f"  [!] No translator available for {name} (needs Claude Code, Ollama or LM Studio).")
-            continue
-        f = out_dir / f"{base}_transcript_{safe_name(name)}.txt"
-        write_transcript(f, vpath.name, f"{lang_line}  |  Translated to {name} by {by}",
-                         info.duration, text, note)
-        files.append(f)
-        for sf in write_subtitles(out_dir / f"{base}_subtitles_{safe_name(name)}",
-                                  segs_from_stamped(text, raw_segs[-1][1] if raw_segs else 0), subs):
-            files.append(sf)
-            print(f"Subtitles saved: {sf}")
-        print(f"Translation saved: {f}\n")
-        if cfg.get("speak_save"):
-            plain = re.sub(r"^\[\d\d:\d\d:\d\d\]\s*(\([^)]*\)\s*)?", "", text, flags=re.M)
-            print(f"Creating {name} speech audio...")
-            sp, info_ = tts_to_file(plain, name, out_dir / f"{base}_{safe_name(name)}_speech", online)
-            if sp:
-                files.append(sp)
-                print(f"  Speech saved: {sp}  ({info_})\n")
-            else:
-                print(f"  [!] {info_}\n")
+        with step(cfg, "translation", f"Translation to {name}"):
+            text, by = translate_transcript(body, name, online)
+            if not text and name == "English":
+                text, by = whisper_translate_english(model, audio_src, cfg["language"], offset, noisy), "Whisper"
+            if not text:
+                print(f"  [!] No translator available for {name} (needs Claude Code, Ollama or LM Studio).")
+                continue
+            f = out_dir / f"{base}_transcript_{safe_name(name)}.txt"
+            write_transcript(f, vpath.name, f"{lang_line}  |  Translated to {name} by {by}",
+                             info.duration, text, note)
+            files.append(f)
+            for sf in write_subtitles(out_dir / f"{base}_subtitles_{safe_name(name)}",
+                                      segs_from_stamped(text, raw_segs[-1][1] if raw_segs else 0), subs):
+                files.append(sf)
+                print(f"Subtitles saved: {sf}")
+            print(f"Translation saved: {f}\n")
+            if cfg.get("speak_save"):
+                plain = re.sub(r"^\[\d\d:\d\d:\d\d\]\s*(\([^)]*\)\s*)?", "", text, flags=re.M)
+                print(f"Creating {name} speech audio...")
+                sp, info_ = tts_to_file(plain, name, out_dir / f"{base}_{safe_name(name)}_speech", online)
+                if sp:
+                    files.append(sp)
+                    print(f"  Speech saved: {sp}  ({info_})\n")
+                else:
+                    print(f"  [!] {info_}\n")
 
     # ---- Chapters + key points (written once, in the first output language)
-    if cfg.get("chapters") and body:
-        ch_lang = targets[0][0] if targets else main_name
-        print(f"Finding chapters and key points ({ch_lang})...")
-        md, by = make_chapters(body, info.duration, ch_lang, online)
-        if md:
-            f = out_dir / f"{base}_chapters.md"
-            f.write_text(f"# Chapters and key points: {vpath.name}" + chr(10) + chr(10) + md + chr(10) + chr(10) +
-                         f"---{chr(10)}_{lang_line}. Made by: {by}_{chr(10)}", encoding="utf-8")
-            files.append(f)
-            print(f"Chapters saved: {f}" + chr(10))
-        else:
-            print("  [!] Could not make chapters (needs Claude Code, Ollama or LM Studio)." + chr(10))
+    if cfg.get("chapters") and body and not skipped(cfg, "chapters"):
+        with step(cfg, "chapters", "Chapters and key points"):
+            ch_lang = targets[0][0] if targets else main_name
+            print(f"Finding chapters and key points ({ch_lang})...")
+            md, by = make_chapters(body, info.duration, ch_lang, online)
+            if md:
+                f = out_dir / f"{base}_chapters.md"
+                f.write_text(f"# Chapters and key points: {vpath.name}" + chr(10) + chr(10) + md + chr(10) + chr(10) +
+                             f"---{chr(10)}_{lang_line}. Made by: {by}_{chr(10)}", encoding="utf-8")
+                files.append(f)
+                print(f"Chapters saved: {f}" + chr(10))
+            else:
+                print("  [!] Could not make chapters (needs Claude Code, Ollama or LM Studio)." + chr(10))
 
     # ---- Summaries (only when switched on)
     summaries = []
@@ -2481,34 +2550,36 @@ def _process(vpath, audio_src, offset, clip, cfg, model, online, kind, source, o
             frames, interval = extract_frames(str(vpath), info.duration, workdir, start=offset)
             print(f"  {len(frames)} frames\n")
 
-        for name, _ in (targets if cfg.get("make_summary") else []):
-            print(f"Creating {name} summary...")
-            res = summarize(workdir, body, vpath.name, frames, interval, lang_desc, name, online)
-            if not res:
-                print(f"  [!] Could not create the {name} summary.\n")
-                continue
-            summary, by = res
-            suffix = "" if len(targets) == 1 else f"_{safe_name(name)}"
-            f = out_dir / f"{base}_summary{suffix}.md"
-            f.write_text(f"{summary}\n\n---\n_{lang_line}. {note.strip()} Summary by: {by}_\n",
-                         encoding="utf-8")
-            files.append(f)
-            summaries.append((name, f, summary))
-            print(f"  Saved: {f}\n")
+        for name, _ in (targets if cfg.get("make_summary") and not skipped(cfg, "summary") else []):
+            with step(cfg, "summary", f"{name} summary"):
+                print(f"Creating {name} summary...")
+                res = summarize(workdir, body, vpath.name, frames, interval, lang_desc, name, online)
+                if not res:
+                    print(f"  [!] Could not create the {name} summary.\n")
+                    continue
+                summary, by = res
+                suffix = "" if len(targets) == 1 else f"_{safe_name(name)}"
+                f = out_dir / f"{base}_summary{suffix}.md"
+                f.write_text(f"{summary}\n\n---\n_{lang_line}. {note.strip()} Summary by: {by}_\n",
+                             encoding="utf-8")
+                files.append(f)
+                summaries.append((name, f, summary))
+                print(f"  Saved: {f}\n")
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
     exp = cfg.get("export", "none")
-    if exp not in (None, "", "none") and summaries:
+    if exp not in (None, "", "none") and summaries and not skipped(cfg, "export"):
         import exporter
         ch_file = out_dir / f"{base}_chapters.md"
-        for k, (_, sf, _) in enumerate(summaries):
-            try:
-                for ef in exporter.export_summary(sf, exp, ch_file if k == 0 else None):
-                    files.append(ef)
-                    print(f"Exported: {ef}")
-            except Exception as e:
-                print(f"  [!] Could not export {sf.name}: {str(e)[:150]}")
+        with step(cfg, "export", "Word / PDF export"):
+            for k, (_, sf, _) in enumerate(summaries):
+                try:
+                    for ef in exporter.export_summary(sf, exp, ch_file if k == 0 else None):
+                        files.append(ef)
+                        print(f"Exported: {ef}")
+                except Exception as e:
+                    print(f"  [!] Could not export {sf.name}: {str(e)[:150]}")
 
     add_history(kind, base, source or vpath, lang_desc, info.duration, files + [vpath])
 

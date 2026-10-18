@@ -600,6 +600,15 @@ function addJobPanel(tab, jobId, title) {
   wrap.className = "joblog";
   wrap.innerHTML = `<div class="joblog-head"><span>${title}</span>
       <span class="joblog-actions">
+        <button class="ghostbtn tiny" data-a="skipnow" style="display:none;" title="Skip the step that is running now and carry on with the next one">Skip step</button>
+        <details class="skipmenu" style="display:none;"><summary class="ghostbtn tiny">Leave out...</summary>
+          <div class="skiplist">
+            <label><input type="checkbox" data-k="speakers"> Speaker labels</label>
+            <label><input type="checkbox" data-k="translation"> Translations</label>
+            <label><input type="checkbox" data-k="chapters"> Chapters</label>
+            <label><input type="checkbox" data-k="summary"> Summary</label>
+            <label><input type="checkbox" data-k="export"> Word / PDF export</label>
+          </div></details>
         <button class="ghostbtn tiny danger" data-a="stop" title="Stop this job (a waiting job is dropped from the queue)">Stop</button>
         <span class="joblog-status">Running...</span>
       </span></div>
@@ -615,9 +624,26 @@ function addJobPanel(tab, jobId, title) {
     await callApi("cancel_job", jobId);
   });
 
+  const skipNow = wrap.querySelector('[data-a="skipnow"]');
+  const skipMenu = wrap.querySelector(".skipmenu");
+  skipNow.addEventListener("click", async () => {
+    const r = await callApi("skip_step", jobId);
+    if (!r || !r.ok) toast((r && r.message) || "Nothing to skip right now.");
+  });
+  skipMenu.querySelectorAll("input").forEach((cb) => cb.addEventListener("change", () => {
+    callApi("set_job_skips", jobId, [...skipMenu.querySelectorAll("input:checked")].map((i) => i.dataset.k));
+  }));
+  let skipsShown = false;
+
   let offset = 0;
   const tick = async () => {
     const r = await callApi("get_job_log", jobId, offset);
+    if (r.canSkip) {
+      skipMenu.style.display = r.done ? "none" : "";
+      if (!skipsShown) { skipMenu.querySelectorAll("input").forEach((cb) => { cb.checked = (r.skips || []).includes(cb.dataset.k); }); skipsShown = true; }
+    }
+    skipNow.style.display = r.step && !r.done ? "" : "none";
+    if (r.step) skipNow.textContent = "Skip: " + r.step;
     if (r.lines.length) {
       bodyEl.textContent += r.lines.join("");
       bodyEl.scrollTop = bodyEl.scrollHeight;
@@ -626,7 +652,7 @@ function addJobPanel(tab, jobId, title) {
     if (r.done) {
       statusEl.textContent = r.cancelled ? "Stopped" : "Done";
       statusEl.classList.add("done");
-      stopBtn.style.display = "none";
+      stopBtn.style.display = "none"; skipNow.style.display = "none"; skipMenu.style.display = "none";
       tab.jobDone();
       wrap.classList.add("finished");
       return;
@@ -1218,7 +1244,34 @@ function wireStart() {
   });
 }
 
+// Cancel button on Home: stops the job you just started (running or still queued)
+const homeJobs = [];
+function trackHomeJob(jobId) {
+  homeJobs.push(jobId);
+  updateCancelBtn();
+}
+async function updateCancelBtn() {
+  const btn = document.getElementById("cancelBtn");
+  if (!btn) return;
+  let active = [];
+  for (const id of homeJobs) {
+    const r = await callApi("get_job_log", id, 1e9);
+    if (r && !r.done) active.push(id);
+  }
+  homeJobs.splice(0, homeJobs.length, ...active);
+  btn.style.display = active.length ? "" : "none";
+  btn.textContent = active.length > 1 ? `✕ ${active.length}` : "✕";
+  if (active.length) setTimeout(updateCancelBtn, 1200);
+}
+document.getElementById("cancelBtn").addEventListener("click", async () => {
+  const id = homeJobs[homeJobs.length - 1];       // the most recently started one
+  if (!id) return;
+  await callApi("cancel_job", id);
+  toast("Cancelling...");
+});
+
 function showStartedJob(res, mode) {
+  if (res && res.jobId) trackHomeJob(res.jobId);
   const tab = openToolTab(res.live ? res.title : ({ file: "File", folder: "Folder", url: "Link", watch: "Watch", regen: "Rebuild" }[mode] || res.title), "mode:" + mode);
   if (res.live) { addLivePanel(res, tab); return; }
   addJobPanel(tab, res.jobId, res.title);
