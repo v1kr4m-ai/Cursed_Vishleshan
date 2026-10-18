@@ -34,7 +34,10 @@ const MOCK_HOME = {
   outputDir: "",
   spokenChoices: ["Auto-detect", "English", "Hindi", "Urdu", "French", "German", "Spanish"],
   outputChoices: ["Original", "English", "Hindi", "Urdu", "French", "German", "Spanish"],
-  outputs: ["Original", "English"],
+  outputs: ["Original"],
+  makeSummary: false,
+  hints: "",
+  vocabText: "",
   mode: "file",
   skipDone: true,
   subtitles: "srt",
@@ -424,7 +427,14 @@ function renderSources() {
     el.checked = !!state[key];
     el.onchange = () => { state[key] = el.checked; persistHome(); };
   };
+  chk("summaryChk", "makeSummary");
   chk("chaptersChk", "chapters");
+  for (const [id, key] of [["hintsText", "hints"], ["vocabText", "vocabText"]]) {
+    const el = document.getElementById(id);
+    el.value = state[key] || "";
+    el.onchange = () => { state[key] = el.value; persistHome(); };
+  }
+  document.getElementById("hintsBox").open = !!(state.hints || state.vocabText);
   chk("wordsChk", "wordTiming");
   const expSel = document.getElementById("exportSelect");
   expSel.value = state.export || "none";
@@ -485,6 +495,9 @@ function persistHome() {
     speed: state.speed,
     speakers: state.speakers,
     preset: state.preset,
+    makeSummary: state.makeSummary,
+    hints: state.hints,
+    vocabText: state.vocabText,
     outputDir: state.outputDir,
     outputs: state.outputs,
     mode: state.mode,
@@ -1125,11 +1138,11 @@ document.getElementById("historyRemoveBtn")?.addEventListener("click", async () 
 // ---- presets: one click sets the cleanup mode, speed, speakers, chapters and export for a kind of recording
 const PRESETS = {
   "Custom": null,
-  "Song / lyrics": { noise: "studio", speed: "75%", speakers: "Off", chapters: false, export: "none", wordTiming: true, subtitles: "srt",
+  "Song / lyrics": { noise: "studio", speed: "75%", speakers: "Off", summary: false, chapters: false, export: "none", wordTiming: true, subtitles: "srt",
     hint: "Studio AI isolates the voice, audio is slowed to 75%, word timing on." },
-  "Meeting": { noise: null, speed: "Normal", speakers: "Auto-detect", chapters: true, export: "docx", wordTiming: false,
+  "Meeting": { noise: null, speed: "Normal", speakers: "Auto-detect", summary: true, chapters: true, export: "docx", wordTiming: false,
     hint: "Speaker labels, chapters and a Word summary." },
-  "Lecture / talk": { noise: null, speed: "Normal", speakers: "Off", chapters: true, export: "pdf", wordTiming: false,
+  "Lecture / talk": { noise: null, speed: "Normal", speakers: "Off", summary: true, chapters: true, export: "pdf", wordTiming: false,
     hint: "Chapters and a PDF summary." },
 };
 
@@ -1137,7 +1150,7 @@ async function applyPreset(name) {
   const p = PRESETS[name];
   state.preset = name;
   if (p) {
-    state.speed = p.speed; state.speakers = p.speakers; state.chapters = p.chapters;
+    state.speed = p.speed; state.speakers = p.speakers; state.chapters = p.chapters; state.makeSummary = p.summary;
     state.export = p.export; state.wordTiming = p.wordTiming; state.subtitles = p.subtitles || state.subtitles;
     if (p.noise) {
       const cu = await callApi("get_voice_cleanup");

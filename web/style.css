@@ -490,3 +490,10 @@ html, body {
 .historytext .unsure:hover { background: #ffe07a; }
 #historyRetrPanel input { width: 90px; }
 .historytext .tline.picked { outline: 1px dashed #f0a21a; }
+
+/* Round 15: hints box */
+.hintsbox { margin-top: 12px; border-radius: 12px; background: #f6f7f9; padding: 8px 14px; }
+.hintsbox summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.hintsbox textarea { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 8px 10px; border: 1px solid #e3e5ea;
+  border-radius: 10px; background: #fff; font: inherit; font-size: 12.5px; resize: vertical; }
+.hintsbox p { margin: 6px 0 2px; }

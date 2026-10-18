@@ -492,6 +492,9 @@ class Api:
             "wordTiming": bool(saved.get("word_timing", False)),
             "speakerChoices": [n for n, _ in vs.SPEAKER_CHOICES],
             "preset": saved.get("preset", "Custom"),
+            "makeSummary": bool(saved.get("make_summary", False)),
+            "hints": saved.get("hints", ""),
+            "vocabText": saved.get("vocab_text", ""),
             "outputDir": saved.get("output_dir", ""),
             "speakers": next((n for n, v in vs.SPEAKER_CHOICES if v == saved.get("speakers", "off")), "Off"),
             "onlineReal": online0,
@@ -512,6 +515,9 @@ class Api:
             "subfolders": bool(data.get("subfolders", False)),
             "speak_save": bool(data.get("speakSave", False)),
             "preset": str(data.get("preset") or "Custom")[:40],
+            "make_summary": bool(data.get("makeSummary", False)),
+            "hints": str(data.get("hints") or "")[:600],
+            "vocab_text": str(data.get("vocabText") or "")[:2000],
             "output_dir": str(data.get("outputDir") or ""),
             "speakers": dict(vs.SPEAKER_CHOICES).get(data.get("speakers"), "off"),
             "chapters": bool(data.get("chapters", False)),
@@ -599,7 +605,7 @@ class Api:
             s["clip"] = (a or 0.0, b)      # this job only - never saved
         mode = payload.get("mode", s.get("mode", "file"))
         online = self._online()
-        vs.VOCAB = vs.load_vocab()
+        vs.apply_hints(s)
 
         if mode in ("mic", "system", "call"):
             sess = live.LiveSession(dict(s), online, mode)
@@ -1078,6 +1084,7 @@ class Api:
             return {"ok": False, "message": str(e)}
         if a is None or b is None or b <= a:
             return {"ok": False, "message": "Give a start and an end time (end after start)."}
+        vs.apply_hints(vs.load_settings())
         job_id = _run_job(_with_model, model_name, lambda m: vs.retranscribe_range(Path(path), media, a, b, m))
         JOBS[job_id]["title"] = f"Re-transcribe {vs.fmt(a)}-{vs.fmt(b)}: {Path(path).name}"
         _qadd(job_id, "retranscribe_part", [str(path), start, end, model_name], JOBS[job_id]["title"])
@@ -1089,7 +1096,7 @@ class Api:
             return {"ok": False, "message": "Pick the main transcript file (…_transcript.txt) first."}
         s = vs.load_settings()
         online = self._online()
-        vs.VOCAB = vs.load_vocab()
+        vs.apply_hints(s)
         job_id = _run_job(vs.regenerate_outputs, Path(path), s, online)
         JOBS[job_id]["title"] = f"Rebuild: {Path(path).name}"
         _qadd(job_id, "regenerate_transcript", [str(path)], JOBS[job_id]["title"])
@@ -1131,7 +1138,16 @@ class Api:
         vs.save_history(items)
         return True
 
+def _migrate_defaults():
+    """v2 defaults: exact transcript only - no translations, summaries, chapters or exports unless switched on."""
+    s = vs.load_settings()
+    if not s.get("defaults_v2"):
+        s.update(outputs=["Original"], make_summary=False, chapters=False, export="none", defaults_v2=True)
+        vs.save_settings(s)
+
+
 def main():
+    _migrate_defaults()
     INTERRUPTED[:] = _qread()   # stays in queue.json until you resume or discard it
     apply_offline_settings()
     if not vs.internet_ok():

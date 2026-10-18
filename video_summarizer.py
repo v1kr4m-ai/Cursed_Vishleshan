@@ -68,7 +68,7 @@ os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 # Defaults (used the first time)
 WHISPER_MODEL = "small"
 SPOKEN_LANGUAGE = None                  # None = auto-detect, or e.g. "hi", "en"
-OUTPUT_LANGUAGES = ["Original", "English"]
+OUTPUT_LANGUAGES = ["Original"]    # exact transcript only; translations and summaries are opt-in
 
 # --- Transcription ---
 DEVICE = "auto"              # "auto" = use an NVIDIA GPU if available, else CPU. Or "cuda" / "cpu"
@@ -279,9 +279,20 @@ def load_vocab():
 _hotwords_ok = {}
 
 
+HINTS = ""   # free-text context the user gave about this recording (topic, names, language mix...)
+
+
+def apply_hints(settings):
+    """Load the user's hints and names/terms list for the job that is about to run."""
+    global HINTS, VOCAB
+    HINTS = (settings.get("hints") or "").strip()[:600]
+    words = [w.strip() for w in re.split(r"[\n;]+", settings.get("vocab_text") or "") if w.strip()]
+    VOCAB = words or load_vocab()
+
+
 def vocab_kwargs(model):
-    """Extra transcribe() arguments that make Whisper prefer the custom spellings."""
-    if not VOCAB:
+    """Extra transcribe() arguments: the user's hints and names/terms make Whisper prefer those spellings."""
+    if not VOCAB and not HINTS:
         return {}
     key = type(model)
     if key not in _hotwords_ok:
@@ -290,16 +301,24 @@ def vocab_kwargs(model):
         except Exception:
             _hotwords_ok[key] = False
     words = ", ".join(VOCAB)
-    if _hotwords_ok[key]:
-        return {"hotwords": words}           # applied to every 30s window
-    return {"initial_prompt": f"Glossary: {words}."}
+    out = {}
+    if _hotwords_ok[key] and words:
+        out["hotwords"] = words              # applied to every 30s window
+        if HINTS:
+            out["initial_prompt"] = HINTS[:400]
+    else:
+        text = (HINTS + " " if HINTS else "") + (f"Glossary: {words}." if words else "")
+        out["initial_prompt"] = text.strip()[:400]
+    return out
 
 
 def vocab_note():
-    if not VOCAB:
-        return ""
-    return ("\nIf any of these names/terms occur, spell them exactly like this: "
-            + ", ".join(VOCAB) + ".")
+    out = ""
+    if HINTS:
+        out += "\nContext from the user about this recording (use it to interpret names and topics): " + HINTS
+    if VOCAB:
+        out += "\nIf any of these names/terms occur, spell them exactly like this: " + ", ".join(VOCAB) + "."
+    return out
 
 
 # ---------------------------------------------------------------- voice cleanup
@@ -1189,8 +1208,7 @@ def decode_kwargs(model, noisy, raw=False):
         k.update(best_of=5, condition_on_previous_text=False,   # stops runaway repeated lines
                  no_speech_threshold=0.6, compression_ratio_threshold=2.2, log_prob_threshold=-1.0,
                  vad_parameters={"threshold": 0.4, "min_silence_duration_ms": 600, "speech_pad_ms": 400})
-    if not raw:
-        k.update(vocab_kwargs(model))
+    k.update(vocab_kwargs(model))    # empty unless the user gave hints / names (then it is wanted)
     try:
         ok = inspect.signature(model.transcribe).parameters
         if not any(p.kind == p.VAR_KEYWORD for p in ok.values()):
@@ -2185,7 +2203,7 @@ def regenerate_outputs(path, cfg, online):
     try:
         (workdir / "transcript.txt").write_text(stamped, encoding="utf-8")
         _notes_cache.clear()
-        for name, _ in targets:
+        for name, _ in (targets if cfg.get("make_summary") else []):
             print(f"Creating {name} summary...")
             res = summarize(workdir, stamped, info["video_name"], [], 0, lang_desc, name, online)
             if not res:
@@ -2452,18 +2470,18 @@ def _process(vpath, audio_src, offset, clip, cfg, model, online, kind, source, o
         else:
             print("  [!] Could not make chapters (needs Claude Code, Ollama or LM Studio)." + chr(10))
 
-    # ---- Summaries
+    # ---- Summaries (only when switched on)
     summaries = []
     workdir = Path(tempfile.mkdtemp(prefix="vidsum_"))
     try:
         (workdir / "transcript.txt").write_text(body or "(No speech detected)", encoding="utf-8")
         frames, interval = [], 0
-        if USE_FRAMES:
+        if cfg.get("make_summary") and USE_FRAMES:
             print("Extracting key frames...")
             frames, interval = extract_frames(str(vpath), info.duration, workdir, start=offset)
             print(f"  {len(frames)} frames\n")
 
-        for name, _ in targets:
+        for name, _ in (targets if cfg.get("make_summary") else []):
             print(f"Creating {name} summary...")
             res = summarize(workdir, body, vpath.name, frames, interval, lang_desc, name, online)
             if not res:
