@@ -62,6 +62,8 @@ CAPTION = {"sid": None, "window": None}   # the single always-on-top caption ove
 
 def _model_dir(name):
     """Folder in the Hugging Face cache that holds this Whisper model's files."""
+    if name.startswith(vs.CUSTOM_PREFIX):
+        return vs.CUSTOM_WHISPER_DIR / name[len(vs.CUSTOM_PREFIX):]
     from huggingface_hub.constants import HF_HUB_CACHE
     return Path(HF_HUB_CACHE) / ("models--" + vs.repo_for(name).replace("/", "--"))
 
@@ -467,7 +469,7 @@ class Api:
     def get_home_data(self):
         saved = vs.load_settings()
         online0 = vs.internet_ok()
-        models = [_model_info(n, s, d) for n, s, d in vs.WHISPER_MODELS]
+        models = [_model_info(n, s, d) for n, s, d in vs.all_whisper_models()]
         spoken_code = saved.get("language")
         device, _ = vs.pick_device()
         return {
@@ -550,7 +552,7 @@ class Api:
         return True
 
     def get_models(self):
-        return [_model_info(n, s, d) for n, s, d in vs.WHISPER_MODELS]
+        return [_model_info(n, s, d) for n, s, d in vs.all_whisper_models()]
 
     def model_open_folder(self, name):
         folder = _model_dir(name)

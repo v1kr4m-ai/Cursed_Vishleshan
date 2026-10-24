@@ -1024,10 +1024,32 @@ _FALLBACK_REPOS = {
 }
 WHISPER_FILES = ["config.json", "preprocessor_config.json", "model.bin",
                  "tokenizer.json", "vocabulary.*"]
+# Your own fine-tuned Whisper models (made in Cursed_Ai's "Train Speech" page and converted for faster-whisper):
+# one folder each, holding model.bin. They appear in the model list as "custom:<folder name>".
+CUSTOM_WHISPER_DIR = Path.home() / "Documents" / "Cursed_Vishleshan" / "models" / "whisper"
+CUSTOM_PREFIX = "custom:"
+
+
+def custom_whisper_models() -> list:
+    try:
+        return sorted(d.name for d in CUSTOM_WHISPER_DIR.iterdir() if (d / "model.bin").is_file())
+    except OSError:
+        return []
+
+
+def all_whisper_models() -> list:
+    """The built-in list plus any custom models, as (name, size, description)."""
+    out = list(WHISPER_MODELS)
+    for n in custom_whisper_models():
+        mb = round(_folder_bytes(CUSTOM_WHISPER_DIR / n) / 1048576)
+        out.append((CUSTOM_PREFIX + n, f"~{mb} MB", "Your own trained model"))
+    return out
 SETTINGS_FILE = Path(__file__).with_name("video_summarizer_settings.json")
 
 
 def repo_for(name: str) -> str:
+    if name.startswith(CUSTOM_PREFIX):                      # a local folder: faster-whisper loads a path as it is
+        return str(CUSTOM_WHISPER_DIR / name[len(CUSTOM_PREFIX):])
     try:
         from faster_whisper.utils import _MODELS
         if name in _MODELS:
@@ -1038,6 +1060,8 @@ def repo_for(name: str) -> str:
 
 
 def is_downloaded(name: str) -> bool:
+    if name.startswith(CUSTOM_PREFIX):
+        return (CUSTOM_WHISPER_DIR / name[len(CUSTOM_PREFIX):] / "model.bin").is_file()
     try:
         from huggingface_hub import try_to_load_from_cache
         return isinstance(try_to_load_from_cache(repo_for(name), "model.bin"), str)
@@ -1059,6 +1083,9 @@ def _folder_bytes(folder: Path) -> int:
 
 def download_whisper(name: str, progress_cb):
     """Download a Whisper model into the Hugging Face cache, reporting % progress."""
+    if name.startswith(CUSTOM_PREFIX):                      # already on this PC, nothing to download
+        progress_cb(100)
+        return
     from huggingface_hub import snapshot_download, HfApi
     from huggingface_hub.constants import HF_HUB_CACHE
 
