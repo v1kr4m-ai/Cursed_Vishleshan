@@ -1,0 +1,27 @@
+{
+  "app.py": {
+    "mtime": 1792841295.738714,
+    "ast_hash": "9bf1e2127465a0b93dc9f20e3bad892d",
+    "semantic_hash": "9bf1e2127465a0b93dc9f20e3bad892d"
+  },
+  "exporter.py": {
+    "mtime": 1791100499.8185325,
+    "ast_hash": "8327dbdf0815825b4cd7b4bf773a6c96",
+    "semantic_hash": "8327dbdf0815825b4cd7b4bf773a6c96"
+  },
+  "live.py": {
+    "mtime": 1791090332.767738,
+    "ast_hash": "e5fd379e9785f7b972465d68d3e50687",
+    "semantic_hash": "e5fd379e9785f7b972465d68d3e50687"
+  },
+  "video_summarizer.py": {
+    "mtime": 1792841295.7377138,
+    "ast_hash": "8dab945ae8430baa0c7d279c6c6bec3d",
+    "semantic_hash": "8dab945ae8430baa0c7d279c6c6bec3d"
+  },
+  "web/app.js": {
+    "mtime": 1792361549.2276764,
+    "ast_hash": "51c808f5ecc0eafac61a54c8fa2e7254",
+    "semantic_hash": "51c808f5ecc0eafac61a54c8fa2e7254"
+  }
+}

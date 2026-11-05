@@ -906,6 +906,42 @@ def _windows_tts(text, code, wav: Path):
     return True, f"Windows voice ({voice if voice != 'NOVOICE' else 'default'}, offline)"
 
 
+def guess_text_language(text, filename=""):
+    """Language NAME of a text: its script when it is not Latin (Devanagari -> Hindi, Arabic script -> Urdu / Arabic),
+    else the language in a '..._transcript_<Language>.txt' file name, else English."""
+    letters = [c for c in text if c.isalpha()]
+    if letters:
+        dev = sum("\u0900" <= c <= "\u097f" for c in letters)
+        arab = sum("\u0600" <= c <= "\u06ff" for c in letters)
+        if dev > len(letters) * 0.3:
+            return "Hindi"
+        if arab > len(letters) * 0.3:
+            m = re.search(r"_(Urdu|Arabic)", filename)
+            return m.group(1) if m else "Urdu"
+    m = re.search(r"_transcript_([A-Za-z]+)", filename)
+    return m.group(1) if m and m.group(1) in LANG_CODES else "English"
+
+
+def _xtts_try(text, code, out_base):
+    """Hindi (and optionally other languages) with the XTTS voice from the Cursed_Ai project. Returns (path, info) or None
+    to let the other engines have a go. Settings: xtts_mode off / hindi (default) / all."""
+    import xtts_bridge
+    s = load_settings()
+    mode = s.get("xtts_mode", "hindi")
+    lang = xtts_bridge.code_for(code)
+    if mode == "off" or not lang or (mode == "hindi" and lang != "hi"):
+        return None
+    if not xtts_bridge.available(s):
+        return None
+    wav = Path(out_base).with_suffix(".wav")
+    print(f"  [read aloud] Making {lang_name(code)} speech with the XTTS voice (offline)...")
+    ok, info = xtts_bridge.speak_one(text, lang, wav, s)
+    if ok:
+        return wav, info
+    print("  [read aloud] XTTS did not work - trying the other voices.")
+    return None
+
+
 def tts_to_file(text, lang, out_base, online):
     """Speech for `text` in language `lang` (name). Online: Microsoft neural voices via
     edge-tts. Offline: the voices built into Windows. Returns (path, info) or (None, reason)."""
@@ -914,6 +950,9 @@ def tts_to_file(text, lang, out_base, online):
         return None, "Nothing to read."
     code = LANG_CODES.get(lang, lang if lang in LANG_NAMES else "en")
     out_base = Path(out_base)
+    xt = _xtts_try(text, code, out_base)
+    if xt:
+        return xt
     why = "Online voices need:  pip install edge-tts"
     if online:
         try:

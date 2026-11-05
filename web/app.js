@@ -512,7 +512,33 @@ function persistHome() {
 }
 
 // ---------------------------------------------------------------- tabs (fixed + one per running tool)
-const TAB_LOADERS = { cleanup: loadCleanupTab, offline: () => { loadOfflineTab(); loadAppSettings(); }, history: () => loadHistoryTab() };
+const TAB_LOADERS = { cleanup: loadCleanupTab, offline: () => { loadOfflineTab(); loadAppSettings(); loadXtts(); }, history: () => loadHistoryTab() };
+
+// ---- Hindi voice (XTTS from the Cursed_Ai project)
+async function loadXtts() {
+  const x = await callApi("get_xtts_settings");
+  if (!x || typeof x.ready === "undefined") return;
+  const $x = (id) => document.getElementById(id);
+  $x("xttsMode").value = x.mode; $x("xttsDir").value = x.dir; $x("xttsRef").value = x.reference || "";
+  $x("xttsStatus").textContent = x.ready ? "Ready - found the XTTS-v2 voice. It runs offline."
+    : "Not ready - missing " + x.missing.join(", ") + ". Set the Cursed_Ai folder below.";
+  $x("xttsStatus").style.color = x.ready ? "#1e8e3e" : "#c5221f";
+  const save = async () => {
+    const r = await callApi("save_xtts_settings", { dir: $x("xttsDir").value, mode: $x("xttsMode").value, reference: $x("xttsRef").value });
+    if (r && typeof r.ready !== "undefined") {
+      $x("xttsStatus").textContent = r.ready ? "Ready - found the XTTS-v2 voice. It runs offline." : "Not ready - missing " + r.missing.join(", ") + ".";
+      $x("xttsStatus").style.color = r.ready ? "#1e8e3e" : "#c5221f";
+    }
+  };
+  $x("xttsMode").onchange = $x("xttsDir").onchange = $x("xttsRef").onchange = save;
+  $x("xttsDirPick").onclick = async () => { const p = await callApi("pick_folder"); if (p) { $x("xttsDir").value = p; save(); } };
+  $x("xttsRefPick").onclick = async () => { const p = await callApi("pick_file"); if (p) { $x("xttsRef").value = p; save(); } };
+  $x("xttsTest").onclick = async () => {
+    await save();
+    const r = await callApi("test_xtts");
+    if (r && r.ok) showStartedJob(r, "voice"); else toast("Could not start the test");
+  };
+}
 
 async function loadAppSettings() {
   const a = await callApi("get_app_settings");
@@ -961,6 +987,7 @@ function updateEditButtons(f, text) {
   $h("historySpeakersBtn").style.display = textual && /Speaker \d+/.test(text || "") ? "" : "none";
   $h("historyRegenBtn").style.display = main ? "" : "none";
   $h("historyRetrBtn").style.display = main && historySelected.media ? "" : "none";
+  $h("historySpeakBtn").style.display = textual ? "" : "none";
   $h("historyRetrPanel").style.display = "none";
   $h("historySpeakerPanel").style.display = "none";
   setEditing(false);
@@ -988,6 +1015,14 @@ $h("historyRevertBtn").addEventListener("click", async () => {
   const r = await callApi("revert_history_text", f.path);
   if (r && r.ok) { f.orig = false; toast("Original restored"); await showHistoryFile(); } else toast((r && r.message) || "Could not revert");
 });
+$h("historySpeakBtn").addEventListener("click", async () => {
+  const f = currentHistoryFile();
+  if (!f) return;
+  const r = await callApi("speak_history_file", f.path);
+  if (!r || !r.ok) { toast((r && r.message) || "Could not start"); return; }
+  showStartedJob(r, "voice");
+});
+
 // ---- re-transcribe a part with another model
 $h("historyRetrBtn").addEventListener("click", async () => {
   const panel = $h("historyRetrPanel");
@@ -1272,7 +1307,7 @@ document.getElementById("cancelBtn").addEventListener("click", async () => {
 
 function showStartedJob(res, mode) {
   if (res && res.jobId) trackHomeJob(res.jobId);
-  const tab = openToolTab(res.live ? res.title : ({ file: "File", folder: "Folder", url: "Link", watch: "Watch", regen: "Rebuild" }[mode] || res.title), "mode:" + mode);
+  const tab = openToolTab(res.live ? res.title : ({ file: "File", folder: "Folder", url: "Link", watch: "Watch", regen: "Rebuild", voice: "Voice" }[mode] || res.title), "mode:" + mode);
   if (res.live) { addLivePanel(res, tab); return; }
   addJobPanel(tab, res.jobId, res.title);
 }

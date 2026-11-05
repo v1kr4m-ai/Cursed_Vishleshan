@@ -927,6 +927,55 @@ class Api:
         _TRAY["focused"] = bool(focused)
         return True
 
+    # ---------------------------------------------------------------- Hindi voice (XTTS from Cursed_Ai)
+    def get_xtts_settings(self):
+        import xtts_bridge
+        s = vs.load_settings()
+        gone = xtts_bridge.missing(s)
+        return {"dir": s.get("xtts_dir") or xtts_bridge.DEFAULT_DIR, "mode": s.get("xtts_mode", "hindi"),
+                "reference": s.get("xtts_reference", ""), "speaker": s.get("xtts_speaker", ""),
+                "ready": not gone, "missing": gone}
+
+    def save_xtts_settings(self, data):
+        s = vs.load_settings()
+        s["xtts_dir"] = str(data.get("dir") or "").strip()
+        s["xtts_mode"] = data.get("mode") if data.get("mode") in ("off", "hindi", "all") else "hindi"
+        s["xtts_reference"] = str(data.get("reference") or "").strip()
+        s["xtts_speaker"] = str(data.get("speaker") or "").strip()
+        vs.save_settings(s)
+        return self.get_xtts_settings()
+
+    def _speak_job(self, text, language, stem):
+        """Make speech for `text` and play it (runs as a queued job)."""
+        wav, info = vs.tts_to_file(text, language, stem, self._online())
+        if not wav:
+            print(f"[!] {info}")
+            return
+        print(f"Saved: {wav}  ({info})")
+        vs.open_path(wav)
+
+    def test_xtts(self):
+        """Say a Hindi sentence with the XTTS voice (queued job; the log shows each step)."""
+        out = vs.SAVE_DIR / "voice_test"
+        out.mkdir(parents=True, exist_ok=True)
+        text = "\u0928\u092e\u0938\u094d\u0924\u0947, \u092f\u0939 \u0935\u093f\u0936\u094d\u0932\u0947\u0937\u0923 \u0910\u092a \u092e\u0947\u0902 \u0939\u093f\u0902\u0926\u0940 \u0906\u0935\u093e\u091c\u093c \u0915\u093e \u090f\u0915 \u092a\u0930\u0940\u0915\u094d\u0937\u0923 \u0939\u0948\u0964"
+        job_id = _run_job(self._speak_job, text, "Hindi", out / "hindi_test")
+        JOBS[job_id]["title"] = "Hindi voice test"
+        return {"ok": True, "jobId": job_id, "title": "Hindi voice test"}
+
+    def speak_history_file(self, path):
+        """Read a transcript / translation / summary from History aloud (Hindi uses the XTTS voice) and open the audio."""
+        if not self._editable(path):
+            return {"ok": False, "message": "That file isn't part of the history."}
+        raw = Path(path).read_text(encoding="utf-8", errors="replace")
+        body = raw.split("===== TIMESTAMPED =====")[-1].split("===== PLAIN TEXT =====")[-1] if "===== PLAIN TEXT =====" in raw else raw
+        text = re.sub(r"^\[\d\d:\d\d:\d\d\]\s*", "", body, flags=re.M)
+        text = re.sub(r"^(Speaker \d+|#+)\s*:?\s*", "", text, flags=re.M)
+        lang = vs.guess_text_language(text, Path(path).name)
+        job_id = _run_job(self._speak_job, text[:6000], lang, Path(path).with_name(Path(path).stem + "_speech"))
+        JOBS[job_id]["title"] = f"Read aloud ({lang}): {Path(path).name}"
+        return {"ok": True, "jobId": job_id, "title": JOBS[job_id]["title"]}
+
     def get_app_settings(self):
         s = vs.load_settings()
         return {"notify": bool(s.get("notify_done", True)), "tray": bool(s.get("tray_keep", True)),

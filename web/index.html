@@ -216,6 +216,25 @@
     </div>
 
     <div class="card full" style="margin-top:16px;">
+      <h2>Hindi voice <span class="muted small">(XTTS from the Cursed_Ai project)</span></h2>
+      <p class="muted small" style="margin-top:0;" id="xttsStatus"></p>
+      <div class="rowflex">
+        <label class="small muted">Use it for</label>
+        <select id="xttsMode" class="select" style="width:auto;">
+          <option value="hindi">Hindi only (recommended)</option>
+          <option value="all">Every language it supports</option>
+          <option value="off">Don't use it</option>
+        </select>
+        <button class="ghostbtn" id="xttsTest" title="Say a Hindi sentence with the voice">Test voice</button>
+      </div>
+      <label class="small muted">Cursed_Ai folder</label>
+      <div class="rowflex"><input type="text" id="xttsDir" class="select" style="flex:1;"><button class="ghostbtn" id="xttsDirPick">Browse...</button></div>
+      <label class="small muted">Voice to copy (optional: a clean 6-30 second recording; empty = the built-in voice)</label>
+      <div class="rowflex"><input type="text" id="xttsRef" class="select" style="flex:1;" placeholder="(built-in voice)"><button class="ghostbtn" id="xttsRefPick">Browse...</button></div>
+      <p class="muted small">Used by "Read aloud", the spoken-audio option for translations, and the Read aloud button in History.</p>
+    </div>
+
+    <div class="card full" style="margin-top:16px;">
       <h2>App behaviour</h2>
       <label class="checkrow"><input type="checkbox" id="notifyChk"> Notify me when a job finishes while the window is in the background</label>
       <label class="checkrow"><input type="checkbox" id="trayChk"> Closing the window while jobs are running keeps them going in the tray icon</label>
@@ -252,6 +271,7 @@
         <div class="rowflex" style="margin-top:12px;">
           <button class="startbtn small" id="historyOpenBtn">Open file</button>
           <button class="ghostbtn" id="historyFolderBtn">Show in folder</button>
+          <button class="ghostbtn" id="historySpeakBtn" style="display:none;" title="Read this text aloud (Hindi uses the XTTS voice) and open the audio">Read aloud</button>
           <button class="ghostbtn" id="historyRetrBtn" style="display:none;" title="Redo just a part of the recording with another (usually bigger) model">Re-transcribe part</button>
           <button class="ghostbtn" id="historyEditBtn" style="display:none;">Edit</button>
           <button class="startbtn small" id="historySaveBtn" style="display:none;">Save edit</button>
